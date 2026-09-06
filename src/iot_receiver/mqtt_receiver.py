@@ -1,6 +1,13 @@
 import os
 import paho.mqtt.client as mqtt
 import json
+import logging
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)s %(message)s"
+)
+logger = logging.getLogger(__name__)
 
 def decode_payload(payload_bytes):
     reading = json.loads(payload_bytes)
@@ -20,25 +27,30 @@ def process_payload(payload_bytes):
     try:
         reading = decode_payload(payload_bytes)
     except json.JSONDecodeError:
-        print("Payload contains invalid JSON")
+        logger.warning("Payload contains invalid JSON")
         return
     is_valid, reason = validate_reading(reading)
     if is_valid:
-        print(reason)
-        print(reading)
+        logger.info(f"{reason}: {reading}")
     else:
-        print(reason)
+        logger.warning(reason)
 
 def on_message(client, userdata, message):
-    print(message.topic)
+    logger.info(f"Received message on topic: {message.topic}")
     process_payload(message.payload)
 
 def on_connect(client, userdata, connect_flags, reason_code, properties):
     if reason_code == 0:
-        print("Connected to MQTT broker")
+        logger.info("Connected to MQTT broker")
         client.subscribe("building/room-a/climate/#")
     else:
-        print(f"Connection failed: {reason_code}")
+        logger.warning(f"Connection failed: {reason_code}")
+
+def on_disconnect(client, userdata, disconnect_flags, reason_code, properties):
+    if reason_code == 0:
+        logger.info("Disconnected from MQTT broker")
+    else:
+        logger.warning(f"Connection to MQTT broker lost: {reason_code}")
 
 client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2)
 client.username_pw_set(
@@ -47,13 +59,6 @@ client.username_pw_set(
 )
 client.on_connect = on_connect
 client.on_message = on_message
-
+client.on_disconnect = on_disconnect
 client.connect("bengt", 1883, 60)
 client.loop_forever()
-test_payload1 = b'{"sensorId":"temp-01","timestamp":"2026-09-03T14:15:00+02:00","value":21.7,"unit":"C"}'
-test_payload2 = b'{"sensorId":"temp-01","timestamp":14.15,"value":21.7,"unit":"C"}'
-test_payload3 = b'{"sensorId":"temp-01","value":21.7,"unit":"C"'
-
-process_payload(test_payload1)
-process_payload(test_payload2)
-process_payload(test_payload3)
