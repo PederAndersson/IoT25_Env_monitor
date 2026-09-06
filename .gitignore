@@ -1,0 +1,29 @@
+# Python: local interpreter files and virtual environments
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# Local configuration and secrets
+.env
+.env.*
+!.env.example
+passwordfile
+*.key
+*.p12
+*.pfx
+secrets/
+
+# Runtime data
+*.log
+*.db
+*.sqlite
+*.sqlite3
+
+# Editor-specific local settings
+.vscode/
+
+# Test and coverage output
+.pytest_cache/
+.coverage
+htmlcov/
