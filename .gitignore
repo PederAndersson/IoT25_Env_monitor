@@ -23,6 +23,9 @@ secrets/
 # Editor-specific local settings
 .vscode/
 
+# Local project notes and planning documents
+docs/
+
 # Test and coverage output
 .pytest_cache/
 .coverage

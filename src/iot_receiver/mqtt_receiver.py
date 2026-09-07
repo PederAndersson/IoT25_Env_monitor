@@ -2,6 +2,7 @@ import os
 import paho.mqtt.client as mqtt
 import json
 import logging
+import sqlite3
 
 logging.basicConfig(
     level=logging.INFO,
