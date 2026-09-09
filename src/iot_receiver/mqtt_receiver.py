@@ -3,6 +3,7 @@ import paho.mqtt.client as mqtt
 import json
 import logging
 import sqlite3
+from pathlib import Path
 
 logging.basicConfig(
     level=logging.INFO,
@@ -10,8 +11,12 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+DATABASE_PATH = PROJECT_ROOT / "data" / "readings.db"
+
 def initialize_database():
-    connection = sqlite3.connect("data/readings.db")
+    DATABASE_PATH.parent.mkdir(parents=True, exist_ok=True)
+    connection = sqlite3.connect(DATABASE_PATH)
     cursor = connection.cursor()
     sql = """
     CREATE TABLE IF NOT EXISTS readings(
@@ -27,7 +32,7 @@ def initialize_database():
     connection.close()
 
 def save_reading(reading):
-    connection = sqlite3.connect("data/readings.db")
+    connection = sqlite3.connect(DATABASE_PATH)
     cursor = connection.cursor()
     sql = """
     INSERT INTO readings(sensor_id, timestamp, value, unit)
@@ -83,14 +88,20 @@ def on_disconnect(client, userdata, disconnect_flags, reason_code, properties):
     else:
         logger.warning(f"Connection to MQTT broker lost: {reason_code}")
 
-initialize_database()
-client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2)
-client.username_pw_set(
-    os.getenv("MQTT_USERNAME"),
-    os.getenv("MQTT_PASSWORD")
-)
-client.on_connect = on_connect
-client.on_message = on_message
-client.on_disconnect = on_disconnect
-client.connect("bengt", 1883, 60)
-client.loop_forever()
+def main():
+    initialize_database()
+    client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2)
+    client.username_pw_set(
+        os.getenv("MQTT_USERNAME"),
+        os.getenv("MQTT_PASSWORD")
+    )
+    broker = os.getenv("MQTT_BROKER", "100.84.116.70")
+    port = int(os.getenv("MQTT_PORT", "1883"))
+    client.on_connect = on_connect
+    client.on_message = on_message
+    client.on_disconnect = on_disconnect
+    client.connect(broker, port, 60)
+    client.loop_forever()
+
+if __name__ == "__main__":
+    main()
