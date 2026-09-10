@@ -5,5 +5,15 @@ services:
     ports:
       - "8000:8000"
     volumes:
-      - ./data:/app/data:Z
+      - ./data:/app/data:z
+    restart: unless-stopped
+
+  mqtt_receiver:
+    build: .
+    container_name: iot-mqtt-receiver
+    command: ["python", "-m", "src.iot_receiver.mqtt_receiver"]
+    env_file:
+      - .env
+    volumes:
+      - ./data:/app/data:z
     restart: unless-stopped
