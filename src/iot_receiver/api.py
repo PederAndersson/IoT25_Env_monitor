@@ -46,3 +46,13 @@ def get_readings(limit: int = Query(default=100, ge=1, le=100)):
         result_list.append(result)
     return result_list
 
+@app.get("/api/v1/status")
+def get_status():
+    connection = sqlite3.connect(DATABASE_PATH)
+    connection.row_factory = sqlite3.Row
+    cursor = connection.cursor()
+    sql = "SELECT COUNT(*) AS storedReadings FROM readings"
+    cursor.execute(sql)
+    storedReadings = cursor.fetchone()
+    connection.close()
+    return dict(storedReadings)
