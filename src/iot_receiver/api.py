@@ -1,4 +1,4 @@
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Query
 import sqlite3
 from src.iot_receiver.mqtt_receiver import DATABASE_PATH
 
@@ -27,7 +27,7 @@ def latest_reading():
     return dict(reading)
 
 @app.get("/api/v1/readings")
-def get_readings(limit: int = 100):
+def get_readings(limit: int = Query(default=100, ge=1, le=100)):
     connection = sqlite3.connect(DATABASE_PATH)
     connection.row_factory = sqlite3.Row
     cursor = connection.cursor()
@@ -45,3 +45,4 @@ def get_readings(limit: int = 100):
         result = dict(reading)
         result_list.append(result)
     return result_list
+
