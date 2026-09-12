@@ -13,6 +13,7 @@ logger = logging.getLogger(__name__)
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 DATABASE_PATH = PROJECT_ROOT / "data" / "readings.db"
+CA_CERT_PATH = PROJECT_ROOT / "certs" / "ca.crt"
 
 def initialize_database():
     DATABASE_PATH.parent.mkdir(parents=True, exist_ok=True)
@@ -96,7 +97,9 @@ def main():
         os.getenv("MQTT_PASSWORD")
     )
     broker = os.getenv("MQTT_BROKER", "100.84.116.70")
-    port = int(os.getenv("MQTT_PORT", "1883"))
+    port = int(os.getenv("MQTT_PORT", "8883"))
+    ca_cert_path = os.getenv("MQTT_CA_PATH", str(CA_CERT_PATH))
+    client.tls_set(ca_certs=ca_cert_path)
     client.on_connect = on_connect
     client.on_message = on_message
     client.on_disconnect = on_disconnect
