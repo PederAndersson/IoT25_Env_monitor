@@ -30,3 +30,9 @@ docs/
 .pytest_cache/
 .coverage
 htmlcov/
+
+# ESP-IDF generated files and local configuration
+firmware/esp32/build/
+firmware/esp32/main/build/
+firmware/esp32/sdkconfig
+firmware/esp32/sdkconfig.old
