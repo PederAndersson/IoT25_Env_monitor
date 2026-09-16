@@ -13,6 +13,7 @@ passwordfile
 *.p12
 *.pfx
 secrets/
+.clangd
 
 # Runtime data
 *.log
