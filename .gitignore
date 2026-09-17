@@ -37,3 +37,4 @@ firmware/esp32/build/
 firmware/esp32/main/build/
 firmware/esp32/sdkconfig
 firmware/esp32/sdkconfig.old
+firmware/esp32/managed_components/
