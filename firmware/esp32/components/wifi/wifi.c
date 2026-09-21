@@ -26,7 +26,7 @@ static esp_event_handler_instance_t s_wifi_handler_instance;
 static esp_event_handler_instance_t s_ip_handler_instance;
 static int retry_counter = 0;
 
-static void event_handler(void *arg, esp_event_base_t event_base, int32_t event_id, void *event_data){
+static void wifi_event_handler(void *arg, esp_event_base_t event_base, int32_t event_id, void *event_data){
     (void)arg;
     esp_err_t ret;
     if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_START){
@@ -95,9 +95,9 @@ esp_err_t wifi_init(void){
     ret = esp_wifi_init(&wifi_init_cfg);
     ESP_RETURN_ON_ERROR(ret, TAG, "WiFi driver initialization failed");
 
-    ret = esp_event_handler_instance_register(WIFI_EVENT, ESP_EVENT_ANY_ID, event_handler, NULL, &s_wifi_handler_instance);
+    ret = esp_event_handler_instance_register(WIFI_EVENT, ESP_EVENT_ANY_ID, wifi_event_handler, NULL, &s_wifi_handler_instance);
     ESP_RETURN_ON_ERROR(ret, TAG, "WiFi event failed to register");
-    ret = esp_event_handler_instance_register(IP_EVENT, IP_EVENT_STA_GOT_IP, event_handler, NULL, &s_ip_handler_instance);
+    ret = esp_event_handler_instance_register(IP_EVENT, IP_EVENT_STA_GOT_IP, wifi_event_handler, NULL, &s_ip_handler_instance);
     ESP_RETURN_ON_ERROR(ret, TAG, "IP event failed to register");
 
     wifi_config_t wifi_cfg = {
