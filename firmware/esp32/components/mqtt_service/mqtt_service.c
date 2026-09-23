@@ -5,12 +5,11 @@
 #include <mqtt_client.h>
 #include <stdint.h>
 #include <sdkconfig.h>
+#include "esp_crt_bundle.h"
 
 static const char * TAG = "MQTT-service";
 
 static esp_mqtt_client_handle_t mqtt_client;
-
-extern const uint8_t server_cert_pem_start[] asm("_binary_ca_crt_start");
 
 
 static void mqtt_event_handler(void* handler_args, esp_event_base_t event_base, int32_t event_id, void* event_data){
@@ -21,7 +20,7 @@ static void mqtt_event_handler(void* handler_args, esp_event_base_t event_base, 
 
     switch(event_id){
         case MQTT_EVENT_CONNECTED:{
-            ESP_LOGI(TAG, "MQTT client started");
+            ESP_LOGI(TAG, "MQTT client task started");
             break;
         }
         case MQTT_EVENT_DISCONNECTED:{
@@ -46,7 +45,7 @@ static void mqtt_event_handler(void* handler_args, esp_event_base_t event_base, 
 esp_err_t mqtt_service_start(void){
     const esp_mqtt_client_config_t mqtt_cfg = {
         .broker.address.uri = CONFIG_APP_MQTT_BROKER_URI,
-        .broker.verification.certificate = (const char*)server_cert_pem_start,
+        .broker.verification.crt_bundle_attach = esp_crt_bundle_attach,
         .credentials.username = CONFIG_APP_MQTT_USERNAME,
         .credentials.authentication.password = CONFIG_APP_MQTT_PASSWORD
     };
