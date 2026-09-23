@@ -1,5 +1,5 @@
 idf_component_register(
     SRCS "main.c"
     INCLUDE_DIRS "."
-    REQUIRES wifi mqtt_service
+    REQUIRES wifi mqtt_service time_sync
 )
