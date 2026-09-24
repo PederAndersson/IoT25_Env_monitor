@@ -3,14 +3,47 @@
 #include "esp_event_base.h"
 #include "esp_log.h"
 #include <mqtt_client.h>
+#include <stddef.h>
 #include <stdint.h>
 #include <sdkconfig.h>
 #include "esp_crt_bundle.h"
+#include <stdio.h>
+#include <time.h>
 
-static const char * TAG = "MQTT-service";
+static const char *TAG = "MQTT-service";
 
 static esp_mqtt_client_handle_t mqtt_client;
+static const float temp_value = 23.7;
+static const char value_unit = 'C';
+static const char sensor_id[] = "esp32-test-temperature";
 
+static esp_err_t create_fake_payload(char *payload, size_t payload_size){
+    char timestamp[21];
+    if(payload == NULL || payload_size == 0){
+        ESP_LOGE(TAG, "Invalid payload buffer.");
+        return ESP_ERR_INVALID_ARG;
+    }
+    const time_t now = time(NULL);
+    struct tm UTC_time;
+    if(gmtime_r(&now, &UTC_time) == NULL){
+        ESP_LOGE(TAG, "UTC time conversion failed");
+        return ESP_ERR_INVALID_RESPONSE;
+    }
+    if(strftime(timestamp, sizeof(timestamp), "%Y-%m-%dT%H:%M:%SZ", &UTC_time) == 0){
+        ESP_LOGE(TAG, "Timestamp formatting failed");
+        return ESP_FAIL;
+    }
+    int written = snprintf(payload, payload_size, "{\"sensorId\":\"%s\",\"timestamp\":\"%s\",\"value\":%.1f,\"unit\":\"%c\"}",sensor_id, timestamp, temp_value, value_unit);
+    if(written <0){
+        ESP_LOGE(TAG, "JSON formatting error");
+        return ESP_ERR_INVALID_RESPONSE;
+    }
+    if ((size_t)written >= payload_size){
+        ESP_LOGE(TAG, "Payload buffer is too small.");
+        return ESP_ERR_INVALID_SIZE;
+    }
+    return ESP_OK;
+}
 
 static void mqtt_event_handler(void* handler_args, esp_event_base_t event_base, int32_t event_id, void* event_data){
     (void)handler_args;
@@ -20,7 +53,20 @@ static void mqtt_event_handler(void* handler_args, esp_event_base_t event_base, 
 
     switch(event_id){
         case MQTT_EVENT_CONNECTED:{
-            ESP_LOGI(TAG, "MQTT client task started");
+            ESP_LOGI(TAG, "connected to MQTT broker");
+            char payload[192];
+            esp_err_t ret = create_fake_payload(payload, sizeof(payload));
+            if (ret != ESP_OK){
+                ESP_LOGE(TAG, "Create payload failed");
+            }else {
+                ESP_LOGI(TAG, "Payload created: %s", payload);
+                int payload_id = esp_mqtt_client_publish(event->client, CONFIG_APP_MQTT_TOPIC, payload, 0, 1, 0);
+                if (payload_id < 0){
+                    ESP_LOGE(TAG, "MQTT failed to publish payload");
+                }else {
+                    ESP_LOGI(TAG, "Payload queued, message id: %d", payload_id);
+                }
+            }
             break;
         }
         case MQTT_EVENT_DISCONNECTED:{
@@ -28,6 +74,7 @@ static void mqtt_event_handler(void* handler_args, esp_event_base_t event_base, 
             break;
         }
         case MQTT_EVENT_PUBLISHED:{
+            
             ESP_LOGI(TAG, "Message published, id: %d", event->msg_id);
             break;
         }

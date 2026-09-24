@@ -80,6 +80,7 @@ def on_connect(client, userdata, connect_flags, reason_code, properties):
     if reason_code == 0:
         logger.info("Connected to MQTT broker")
         client.subscribe("building/room-a/climate/#")
+        client.subscribe("esp-test/#")
     else:
         logger.warning(f"Connection failed: {reason_code}")
 
