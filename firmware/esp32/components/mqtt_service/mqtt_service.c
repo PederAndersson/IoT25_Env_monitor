@@ -27,14 +27,14 @@ static esp_err_t create_device_id(char *id_buffer, size_t id_buffer_size){
     }
     uint8_t mac[6];
     esp_err_t ret = esp_read_mac(mac, ESP_MAC_WIFI_STA);
-    ESP_RETURN_ON_ERROR(ret, TAG, "Failed to get MAC adress: %s", esp_err_to_name(ret));
+    ESP_RETURN_ON_ERROR(ret, TAG, "Failed to get MAC address: %s", esp_err_to_name(ret));
     int written = snprintf(id_buffer, id_buffer_size, "esp32-%02x%02x%02x%02x%02x%02x", MAC2STR(mac));
     if (written < 0){
-        ESP_LOGE(TAG, "Faild to format device id");
+        ESP_LOGE(TAG, "Failed to format device id");
         return ESP_ERR_INVALID_RESPONSE;
     }
     if ((size_t)written >= id_buffer_size){
-        ESP_LOGE(TAG, "Id buffer is to small");
+        ESP_LOGE(TAG, "Id buffer is too small");
         return ESP_ERR_INVALID_SIZE;
     }
     return ESP_OK;
@@ -121,7 +121,9 @@ esp_err_t mqtt_service_start(void){
         .broker.address.uri = CONFIG_APP_MQTT_BROKER_URI,
         .broker.verification.crt_bundle_attach = esp_crt_bundle_attach,
         .credentials.username = CONFIG_APP_MQTT_USERNAME,
-        .credentials.authentication.password = CONFIG_APP_MQTT_PASSWORD
+        .credentials.authentication.password = CONFIG_APP_MQTT_PASSWORD,
+        .credentials.client_id = device_id
+        
     };
 
     mqtt_client = esp_mqtt_client_init(&mqtt_cfg);

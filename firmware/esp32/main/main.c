@@ -19,7 +19,7 @@ void app_main(void)
             ESP_LOGI(TAG, "Time sync successful");
             ret = mqtt_service_start();
             if(ret == ESP_OK){
-                ESP_LOGI(TAG, "Connected to MQTT broker");
+                ESP_LOGI(TAG, "MQTT client started");
             }
             else {
                 ESP_LOGE(TAG, "MQTT client failed to start, %s", esp_err_to_name(ret));
