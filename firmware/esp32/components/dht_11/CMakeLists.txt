@@ -1,6 +1,6 @@
 idf_component_register(
     SRCS "dht_11.c"
-    REQUIRES esp_common sensor_data
+    REQUIRES esp_common sensor_data esp_driver_gpio
     PRIV_REQUIRES dht
     INCLUDE_DIRS "include"
 )
