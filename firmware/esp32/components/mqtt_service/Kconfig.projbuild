@@ -1,0 +1,27 @@
+menu "IoT sensor MQTT configuration"
+
+    config APP_MQTT_BROKER_URI
+        string "MQTT broker URI"
+        default ""
+        help
+            URI to the MQTT broker, mqtts://hostname:8883.
+
+    config APP_MQTT_USERNAME
+        string "MQTT username"
+        default ""
+        help
+            Enter MQTT username.
+
+    config APP_MQTT_PASSWORD
+        string "MQTT password"
+        default ""
+        help
+            Enter MQTT password.
+
+    config APP_MQTT_TOPIC
+        string "MQTT topic"
+        default ""
+        help
+            Enter the MQTT topic.
+
+endmenu

@@ -1,0 +1,24 @@
+menu "IoT sensor Wi-Fi configuration"
+
+    config APP_WIFI_SSID
+        string "Wi-Fi SSID"
+        default ""
+        help
+            Name of the Wi-Fi network that the ESP32 should connect to.
+
+    config APP_WIFI_PASSWORD
+        string "Wi-Fi password"
+        default ""
+        help
+            Password for the Wi-Fi network. Do not place the real
+            password in this Kconfig file.
+
+    config APP_WIFI_MAXIMUM_RETRY
+        int "Maximum connection retries"
+        range 1 20
+        default 5
+        help
+            Maximum number of reconnection attempts before the initial
+            Wi-Fi connection is considered unsuccessful.
+
+endmenu

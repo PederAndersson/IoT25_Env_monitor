@@ -13,6 +13,7 @@ passwordfile
 *.p12
 *.pfx
 secrets/
+.clangd
 
 # Runtime data
 *.log
@@ -23,7 +24,17 @@ secrets/
 # Editor-specific local settings
 .vscode/
 
+# Local project notes and planning documents
+docs/
+
 # Test and coverage output
 .pytest_cache/
 .coverage
 htmlcov/
+
+# ESP-IDF generated files and local configuration
+firmware/esp32/build/
+firmware/esp32/main/build/
+firmware/esp32/sdkconfig
+firmware/esp32/sdkconfig.old
+firmware/esp32/managed_components/
