@@ -24,8 +24,10 @@ def initialize_database():
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         sensor_id TEXT NOT NULL,
         timestamp TEXT NOT NULL,
-        value REAL NOT NULL,
-        unit TEXT NOT NULL
+        humidity_value REAL NOT NULL,
+        humidity_unit TEXT NOT NULL,
+        temperature_value REAL NOT NULL,
+        temperature_unit TEXT NOT NULL
     )
     """
     cursor.execute(sql)
@@ -36,10 +38,10 @@ def save_reading(reading):
     connection = sqlite3.connect(DATABASE_PATH)
     cursor = connection.cursor()
     sql = """
-    INSERT INTO readings(sensor_id, timestamp, value, unit)
-    VALUES(?, ?, ?, ?)
+    INSERT INTO readings(sensor_id, timestamp, humidity_value, humidity_unit, temperature_value, temperature_unit)
+    VALUES(?, ?, ?, ?, ?, ?)
     """
-    values = (reading["sensorId"], reading["timestamp"], reading["value"], reading["unit"])
+    values = (reading["sensorId"], reading["timestamp"], reading["humidity_value"], reading["humidity_unit"], reading["temperature_value"], reading["temperature_unit"])
     cursor.execute(sql, values)
     connection.commit()
     connection.close()
@@ -48,7 +50,7 @@ def decode_payload(payload_bytes):
     reading = json.loads(payload_bytes)
     return reading
 
-required_fields = ["sensorId", "timestamp", "value", "unit"]
+required_fields = ["sensorId", "timestamp", "humidity_value", "humidity_unit", "temperature_value", "temperature_unit"]
 
 def validate_reading(reading):
     for field in required_fields:

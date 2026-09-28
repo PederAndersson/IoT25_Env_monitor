@@ -14,7 +14,7 @@ def latest_reading():
     connection.row_factory = sqlite3.Row
     cursor = connection.cursor()
     sql = """
-        SELECT id, sensor_id AS sensorId, timestamp, value, unit
+        SELECT id, sensor_id AS sensorId, timestamp, humidity_value, humidity_unit, temperature_value, temperature_unit
         FROM readings
         ORDER BY id DESC
         LIMIT 1
@@ -32,7 +32,7 @@ def get_readings(limit: int = Query(default=100, ge=1, le=100)):
     connection.row_factory = sqlite3.Row
     cursor = connection.cursor()
     sql = """
-        SELECT id, sensor_id AS sensorId, timestamp, value, unit
+        SELECT id, sensor_id AS sensorId, timestamp, humidity_value, humidity_unit, temperature_value, temperature_unit
         FROM readings
         ORDER BY id DESC
         LIMIT ?
