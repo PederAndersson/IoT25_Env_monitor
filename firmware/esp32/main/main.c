@@ -8,7 +8,6 @@
 
 static const char* TAG = "Env Monitor";
 
-sensor_data_t data;
 
 void app_main(void)
 {
@@ -22,7 +21,6 @@ void app_main(void)
         ret = time_sync_wait();
         if (ret == ESP_OK){
             ESP_LOGI(TAG, "Time sync successful");
-            ret = dht_11_read(&data);
             ret = mqtt_service_start();
             if(ret == ESP_OK){
                 ESP_LOGI(TAG, "MQTT client started");
