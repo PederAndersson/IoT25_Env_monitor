@@ -9,16 +9,17 @@
 #include <sdkconfig.h>
 #include "esp_crt_bundle.h"
 #include "esp_mac.h"
+#include "sensor_data.h"
 #include <stdio.h>
 #include <time.h>
+#include "dht_11.h"
+
 
 static const char *TAG = "MQTT-service";
 
 static esp_mqtt_client_handle_t mqtt_client;
-static const float temp_value = 23.7;
-static const char value_unit = 'C';
-static const char sensor_id[] = "esp32-test-temperature";
-static char device_id[19];
+static sensor_data_t data;
+static char payload[256];
 
 static esp_err_t create_device_id(char *id_buffer, size_t id_buffer_size){
     if(id_buffer == NULL || id_buffer_size == 0){
@@ -40,23 +41,46 @@ static esp_err_t create_device_id(char *id_buffer, size_t id_buffer_size){
     return ESP_OK;
 }
 
-static esp_err_t create_fake_payload(char *payload, size_t payload_size){
-    char timestamp[21];
-    if(payload == NULL || payload_size == 0){
-        ESP_LOGE(TAG, "Invalid payload buffer.");
+static esp_err_t create_timestamp(char *timestamp_buffer, size_t timestamp_buffer_size){
+    if (timestamp_buffer == NULL || timestamp_buffer_size == 0){
+        ESP_LOGE(TAG, "invalid timestamp buffer");
         return ESP_ERR_INVALID_ARG;
-    }
+    }    
     const time_t now = time(NULL);
     struct tm UTC_time;
     if(gmtime_r(&now, &UTC_time) == NULL){
         ESP_LOGE(TAG, "UTC time conversion failed");
         return ESP_ERR_INVALID_RESPONSE;
     }
-    if(strftime(timestamp, sizeof(timestamp), "%Y-%m-%dT%H:%M:%SZ", &UTC_time) == 0){
+    if(strftime(timestamp_buffer, timestamp_buffer_size, "%Y-%m-%dT%H:%M:%SZ", &UTC_time) == 0){
         ESP_LOGE(TAG, "Timestamp formatting failed");
         return ESP_FAIL;
     }
-    int written = snprintf(payload, payload_size, "{\"sensorId\":\"%s\",\"timestamp\":\"%s\",\"value\":%.1f,\"unit\":\"%c\"}",sensor_id, timestamp, temp_value, value_unit);
+
+    return ESP_OK;
+}
+
+static esp_err_t take_full_measurement(sensor_data_t *data){
+    esp_err_t ret = dht_11_read(data);
+    if (ret != ESP_OK){
+        ESP_LOGE(TAG, "dht_11_read failed: %s", esp_err_to_name(ret));
+        return ret;
+    }
+    ret = create_timestamp(data->timestamp, sizeof(data->timestamp));
+    if (ret != ESP_OK){
+        ESP_LOGE(TAG, "create timestamp failed: %s", esp_err_to_name(ret));
+        return ret;
+    }
+    return ESP_OK;
+}
+
+static esp_err_t create_payload(const sensor_data_t *data, char *payload, size_t payload_size){
+    if(data == NULL || payload == NULL || payload_size == 0){
+        ESP_LOGE(TAG, "Invalid payload buffer.");
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    int written = snprintf(payload, payload_size, "{\"sensorId\":\"%s\",\"timestamp\":\"%s\",\"humidity_value\":%.1f,\"humidity_unit\":\"%s\", \"temperature_value\":%.1f, \"temperature_unit\":\"%s\"}",data->sensor_id, data->timestamp, data->humidity.humidity, data->humidity.unit, data->temperature.temperature, data->temperature.unit);
     if(written < 0){
         ESP_LOGE(TAG, "JSON formatting error");
         return ESP_ERR_INVALID_RESPONSE;
@@ -77,8 +101,12 @@ static void mqtt_event_handler(void* handler_args, esp_event_base_t event_base, 
     switch(event_id){
         case MQTT_EVENT_CONNECTED:{
             ESP_LOGI(TAG, "connected to MQTT broker");
-            char payload[192];
-            esp_err_t ret = create_fake_payload(payload, sizeof(payload));
+            esp_err_t ret = take_full_measurement(&data);
+            if (ret != ESP_OK){
+                ESP_LOGE(TAG, "take_full_measurement failed: %s", esp_err_to_name(ret));
+                break;
+            }
+            ret = create_payload(&data, payload, sizeof(payload));
             if (ret != ESP_OK){
                 ESP_LOGE(TAG, "Create payload failed");
             }else {
@@ -114,15 +142,15 @@ static void mqtt_event_handler(void* handler_args, esp_event_base_t event_base, 
 
 esp_err_t mqtt_service_start(void){
     esp_err_t ret;
-    ret = create_device_id(device_id, sizeof(device_id));
+    ret = create_device_id(data.sensor_id, sizeof(data.sensor_id));
     ESP_RETURN_ON_ERROR(ret, TAG, "Failed to create id: %s", esp_err_to_name(ret));
-    ESP_LOGI(TAG, "Device id: %s", device_id);
+    ESP_LOGI(TAG, "Device id: %s", data.sensor_id);
     const esp_mqtt_client_config_t mqtt_cfg = {
         .broker.address.uri = CONFIG_APP_MQTT_BROKER_URI,
         .broker.verification.crt_bundle_attach = esp_crt_bundle_attach,
         .credentials.username = CONFIG_APP_MQTT_USERNAME,
         .credentials.authentication.password = CONFIG_APP_MQTT_PASSWORD,
-        .credentials.client_id = device_id
+        .credentials.client_id = data.sensor_id
         
     };
 
