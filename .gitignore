@@ -26,6 +26,7 @@ secrets/
 
 # Local project notes and planning documents
 docs/
+/AGENTS.md
 
 # Test and coverage output
 .pytest_cache/
