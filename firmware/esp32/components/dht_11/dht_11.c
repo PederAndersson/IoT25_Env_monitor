@@ -4,7 +4,6 @@
 #include "esp_log.h"
 #include "sensor_data.h"
 #include "soc/gpio_num.h"
-#include "esp_check.h"
 #include "sdkconfig.h"
 
 static const char *TAG = "DHT11";
@@ -26,13 +25,10 @@ esp_err_t dht_11_read(sensor_data_t *sensor_data){
         ESP_LOGE(TAG, "DHT reading failed: %s", esp_err_to_name(ret));
         return ret;
     }
-    sensor_data->humidity.humidity = humidity;
-    sensor_data->humidity.unit = "%";
-    sensor_data->temperature.temperature = temperature;
-    sensor_data->temperature.unit = "C";
+    sensor_data->humidity = humidity;
+    sensor_data->temperature = temperature;
 
-    ESP_LOGI(TAG, "DHT reading successful, Humidity: %.f %s, Temperature: %.1f %s",
-        humidity, sensor_data->humidity.unit, temperature, sensor_data->temperature.unit
-    );       
+    ESP_LOGI(TAG, "DHT reading successful, Humidity: %.f, Temperature: %.1f",
+        humidity, temperature);
     return ESP_OK;
 }

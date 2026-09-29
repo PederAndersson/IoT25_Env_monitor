@@ -1,10 +1,9 @@
 #include <esp_log.h>
 #include "esp_err.h"
-#include "sensor_data.h"
 #include "wifi.h"
 #include "mqtt_service.h"
 #include "time_sync.h"
-#include "dht_11.h"
+#include "telemetry_service.h"
 
 static const char* TAG = "Env Monitor";
 
@@ -24,9 +23,14 @@ void app_main(void)
             ret = mqtt_service_start();
             if(ret == ESP_OK){
                 ESP_LOGI(TAG, "MQTT client started");
-            }
-            else {
+            }else {
                 ESP_LOGE(TAG, "MQTT client failed to start, %s", esp_err_to_name(ret));
+            }
+            ret = telemetry_service_start();
+            if (ret == ESP_OK){
+                ESP_LOGI(TAG, "Sensor telemetry service started.");
+            }else{
+                ESP_LOGE(TAG, "Sensor telemetry failed to start.");
             }
         }
         else {

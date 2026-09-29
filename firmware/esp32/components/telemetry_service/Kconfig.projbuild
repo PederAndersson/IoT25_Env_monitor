@@ -1,0 +1,23 @@
+menu "Telemetry queue length and interval"
+    config APP_TELEMETRY_QUEUE_LEN
+        int "Choose the length of the queue."
+        range 10 120
+        default 60
+        help
+            choose between 10-120
+
+    config APP_TELEMETRY_SENSOR_READ_INTERVAL
+        int "choose the interval between sensor readings."
+        range 2000 3600000
+        default 60000
+        help
+            remember interval is in ms between 2000 - 3600000
+
+    config APP_TELEMETRY_ALARM_QUEUE_LEN
+        int "Choose the length of the alarm queue"
+        range 10 30
+        default 10
+        help
+            choose between 10-30
+
+endmenu
