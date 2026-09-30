@@ -66,7 +66,7 @@ static esp_err_t enqueue_measurement(const sensor_data_t *measurement){
 
     ret = xQueueSend(sensor_queue, measurement, 0);
     if (ret == pdPASS){
-        ESP_LOGI(TAG, "Enqueue successful, Queued readings: %u of 60", (unsigned int)uxQueueMessagesWaiting(sensor_queue));
+        ESP_LOGI(TAG, "Enqueue successful, Queued readings: %u of %d", (unsigned int)uxQueueMessagesWaiting(sensor_queue), CONFIG_APP_TELEMETRY_QUEUE_LEN);
         return ESP_OK;
     }
     else {
