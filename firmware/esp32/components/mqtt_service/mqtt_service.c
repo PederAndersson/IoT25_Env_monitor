@@ -12,13 +12,14 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/event_groups.h"
 #include <stdio.h>
+#include <time.h>
 
 #define MQTT_CONNECTED_BIT BIT0
 
 static const char *TAG = "MQTT-service";
 static EventGroupHandle_t mqtt_event;
 static esp_mqtt_client_handle_t mqtt_client;
-static char client_id[25];
+static char client_id[25] = {0};
 static char mqtt_topic_buffer[64];
 
 bool mqtt_service_is_connected(void){
@@ -120,7 +121,27 @@ static void mqtt_event_handler(void* handler_args, esp_event_base_t event_base, 
     }
 }
 
+esp_err_t mqtt_service_copy_device_id(char *device_id, size_t device_id_size){
+    if (device_id == NULL || device_id_size == 0){
+        ESP_LOGE(TAG, "id buffer invalid");
+        return ESP_ERR_INVALID_SIZE;
+    }
+    if (client_id[0] == '\0'){
+        ESP_LOGE(TAG, "Client id empty");
+        return ESP_ERR_INVALID_STATE;
+    }
+    int written = snprintf(device_id, device_id_size, "%s",client_id);
+    if (written < 0){
+        ESP_LOGE(TAG, "Device id failed to format");
+        return ESP_ERR_INVALID_RESPONSE;
+    }
+    if ((size_t)written >= device_id_size){
+        ESP_LOGE(TAG, "Buffer size too small");
+        return ESP_ERR_INVALID_SIZE;
+    }
 
+    return ESP_OK;
+}
 
 esp_err_t mqtt_service_start(void){
     if (mqtt_event != NULL){

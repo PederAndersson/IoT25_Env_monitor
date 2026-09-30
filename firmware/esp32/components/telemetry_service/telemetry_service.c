@@ -1,6 +1,8 @@
 #include "telemetry_service.h"
 #include "esp_err.h"
 #include "esp_log.h"
+#include <stddef.h>
+#include <stdio.h>
 #include <time.h>
 #include "dht_11.h"
 #include "sdkconfig.h"
@@ -8,13 +10,18 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/queue.h"
 #include "freertos/task.h"
-
+#include "mqtt_service.h"
 
 static const char *TAG = "telemetry service";
 static const int queue_len = CONFIG_APP_TELEMETRY_QUEUE_LEN;
-static const int stack_size = 4096;
-static const int task_priority = 5;
+static const int sensor_stack_size = 4096;
+static const int sensor_task_priority = 5;
+static const int mqtt_stack_size = 4096;
+static const int mqtt_task_priority = 4;
+static const int wait_time = 1000;
 static QueueHandle_t sensor_queue;
+static TaskHandle_t sensor_task_handle;
+static TaskHandle_t mqtt_task_handle;
 static int dropped_readings = 0;
 
 
@@ -97,7 +104,7 @@ static void sensor_task(void *param){
     TickType_t last_wake_time = xTaskGetTickCount();
     TickType_t sensor_interval = pdMS_TO_TICKS(CONFIG_APP_TELEMETRY_SENSOR_READ_INTERVAL);
 
-    while (1){
+    while (true){
         ret = take_full_measurement(&measurement);
         if (ret == ESP_OK){
             ESP_LOGI(TAG, "Measurement successful.");
@@ -112,6 +119,60 @@ static void sensor_task(void *param){
     }
 }
 
+static void mqtt_publish_task(void *param){
+    (void)param;
+    sensor_data_t pending;
+    char id[25];
+    char payload[260];
+    BaseType_t bt_ret;
+    esp_err_t err_ret;
+    bool has_pending = false;
+    while (true){
+        if (has_pending == false){
+            bt_ret = xQueueReceive(sensor_queue, &pending, portMAX_DELAY);
+            if (bt_ret != pdTRUE){
+                ESP_LOGE(TAG, "Unexpected receive error");
+                vTaskDelay(pdMS_TO_TICKS(wait_time));
+                continue;
+            }else {
+                has_pending = true;
+                ESP_LOGI(TAG, "Pending message received.");
+            }
+        }
+        if (mqtt_service_is_connected() != true){
+            ESP_LOGE(TAG, "MQTT service not connected.");
+            vTaskDelay(pdMS_TO_TICKS(wait_time));
+            continue;
+        }
+        err_ret = mqtt_service_copy_device_id(id, sizeof(id));
+        if (err_ret != ESP_OK){
+            ESP_LOGE(TAG, "Failed to copy id: %s", esp_err_to_name(err_ret));
+            vTaskDelay(pdMS_TO_TICKS(wait_time));
+            continue;
+        }
+        int written = snprintf(payload, sizeof(payload), "{\"sensorId\":\"%s\",\"timestamp\":\"%s\",\"humidity_value\":%.1f,\"humidity_unit\":\"%%\",\"temperature_value\":%.1f,\"temperature_unit\":\"C\"}",
+        id, pending.timestamp, pending.humidity, pending.temperature);
+        if (written < 0){
+            ESP_LOGE(TAG, "Failed to format JSON");
+            vTaskDelay(pdMS_TO_TICKS(wait_time));
+            continue;
+        }
+        if ((size_t)written >= sizeof(payload)){
+            ESP_LOGE(TAG, "Payload too small.");
+            vTaskDelay(pdMS_TO_TICKS(wait_time));
+            continue;
+        }
+        err_ret = mqtt_service_enqueue_telemetry(payload);
+        if (err_ret == ESP_OK){
+            ESP_LOGI(TAG, "Payload enqueued.");
+            has_pending = false;
+        }
+        else{
+            vTaskDelay(pdMS_TO_TICKS(wait_time));
+        }
+    }
+}
+
 esp_err_t telemetry_service_start(void){
     if (sensor_queue != NULL){
         ESP_LOGE(TAG, "Sensor queue already exist");
@@ -122,9 +183,20 @@ esp_err_t telemetry_service_start(void){
         ESP_LOGE(TAG, "Failed to create queue");
         return ESP_ERR_NO_MEM;
     }
-    BaseType_t ret = xTaskCreate(sensor_task, "sensor_read", stack_size, NULL, task_priority, NULL);
+    BaseType_t ret = xTaskCreate(mqtt_publish_task, "mqtt publish", mqtt_stack_size, NULL, mqtt_task_priority, &mqtt_task_handle);
     if (ret != pdPASS){
-        ESP_LOGE(TAG, "Create task failed.");
+        ESP_LOGE(TAG, "Failed to create MQTT task");
+        mqtt_task_handle = NULL;
+        vQueueDelete(sensor_queue);
+        sensor_queue = NULL;
+        return ESP_FAIL;
+    }
+    ret = xTaskCreate(sensor_task, "sensor_read", sensor_stack_size, NULL, sensor_task_priority, &sensor_task_handle);
+    if (ret != pdPASS){
+        ESP_LOGE(TAG, "Failed to create sensor task.");
+        vTaskDelete(mqtt_task_handle);
+        mqtt_task_handle = NULL;
+        sensor_task_handle = NULL;
         vQueueDelete(sensor_queue);
         sensor_queue = NULL;
         return ESP_FAIL;
