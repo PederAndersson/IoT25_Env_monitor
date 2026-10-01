@@ -18,10 +18,4 @@ menu "IoT sensor MQTT configuration"
         help
             Enter MQTT password.
 
-    config APP_MQTT_TOPIC
-        string "MQTT topic"
-        default ""
-        help
-            Enter the MQTT topic.
-
 endmenu
