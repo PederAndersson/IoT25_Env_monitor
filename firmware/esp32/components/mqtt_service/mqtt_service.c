@@ -20,7 +20,10 @@ static const char *TAG = "MQTT-service";
 static EventGroupHandle_t mqtt_event;
 static esp_mqtt_client_handle_t mqtt_client;
 static char client_id[25] = {0};
-static char mqtt_topic_buffer[64];
+static char telemetry_topic[64];
+static char status_topic[64];
+static const char status_suffix[] = "status";
+static const char telemetry_suffix[] = "telemetry";
 
 bool mqtt_service_is_connected(void){
     if (mqtt_event == NULL){
@@ -49,12 +52,12 @@ static esp_err_t create_device_id(char *id_buffer, size_t id_buffer_size){
     return ESP_OK;
 }
 
-static esp_err_t create_mqtt_topic(char *topic_buffer, size_t topic_buffer_size){
-    if (topic_buffer == NULL || topic_buffer_size == 0){
+static esp_err_t create_mqtt_topic(char *topic_buffer, size_t topic_buffer_size, const char *suffix){
+    if (topic_buffer == NULL || topic_buffer_size == 0 || suffix == NULL){
         ESP_LOGE(TAG, "Invalid buffer.");
         return ESP_ERR_INVALID_ARG;
     }
-    int written = snprintf(topic_buffer, topic_buffer_size, "esp-test/%s/telemetry", client_id);
+    int written = snprintf(topic_buffer, topic_buffer_size, "esp-test/%s/%s", client_id,suffix);
     if (written < 0){
         ESP_LOGE(TAG, "Topic failed to format.");
         return ESP_ERR_INVALID_RESPONSE;
@@ -80,7 +83,7 @@ esp_err_t mqtt_service_enqueue_telemetry(const char *payload){
         ESP_LOGE(TAG, "MQTT not connected");
         return ESP_ERR_INVALID_STATE;
     }
-    int message_id = esp_mqtt_client_enqueue(mqtt_client, mqtt_topic_buffer, payload, 0, 1, false, true);
+    int message_id = esp_mqtt_client_enqueue(mqtt_client, telemetry_topic, payload, 0, 1, false, true);
     if (message_id < 0){
         ESP_LOGE(TAG, "Message enqueue failed, message id: %d", message_id);
         return ESP_FAIL;
@@ -99,6 +102,12 @@ static void mqtt_event_handler(void* handler_args, esp_event_base_t event_base, 
         case MQTT_EVENT_CONNECTED:{
             xEventGroupSetBits(mqtt_event, MQTT_CONNECTED_BIT);
             ESP_LOGI(TAG, "connected to MQTT broker");
+            int message_id = esp_mqtt_client_enqueue(event->client, status_topic, "online", 0, 1, true, true);
+            if (message_id < 0){
+                ESP_LOGE(TAG, "Failed to enqueue online status, id: %d", message_id);
+            }else {
+                ESP_LOGI(TAG, "Online status enqueued, message id: %d", message_id);
+            }
             break;
         }
         case MQTT_EVENT_DISCONNECTED:{
@@ -153,9 +162,12 @@ esp_err_t mqtt_service_start(void){
     ret = create_device_id(client_id, sizeof(client_id));
     ESP_RETURN_ON_ERROR(ret, TAG, "Failed to create id: %s", esp_err_to_name(ret));
     ESP_LOGI(TAG, "Device id: %s", client_id);
-    ret = create_mqtt_topic(mqtt_topic_buffer, sizeof(mqtt_topic_buffer));
+    ret = create_mqtt_topic(telemetry_topic, sizeof(telemetry_topic), telemetry_suffix);
     ESP_RETURN_ON_ERROR(ret, TAG, "Failed to create mqtt topic: %s", esp_err_to_name(ret));
-    ESP_LOGI(TAG, "mqtt topic: %s", mqtt_topic_buffer);
+    ESP_LOGI(TAG, "mqtt telemetry topic: %s", telemetry_topic);
+    ret = create_mqtt_topic(status_topic, sizeof(status_topic), status_suffix);
+    ESP_RETURN_ON_ERROR(ret, TAG, "failed to create status topic: %s", esp_err_to_name(ret));
+    ESP_LOGI(TAG, "mqtt status topic: %s", status_topic);
     mqtt_event = xEventGroupCreate();
     if (mqtt_event == NULL){
         ESP_LOGE(TAG, "Failed to create MQTT eventgroup.");
@@ -166,8 +178,12 @@ esp_err_t mqtt_service_start(void){
         .broker.verification.crt_bundle_attach = esp_crt_bundle_attach,
         .credentials.username = CONFIG_APP_MQTT_USERNAME,
         .credentials.authentication.password = CONFIG_APP_MQTT_PASSWORD,
-        .credentials.client_id = client_id
-        
+        .credentials.client_id = client_id,
+        .session.last_will.topic = status_topic,
+        .session.last_will.msg = "offline",
+        .session.last_will.qos = 1,
+        .session.last_will.retain = true,
+        .session.keepalive = 60
     };
 
     mqtt_client = esp_mqtt_client_init(&mqtt_cfg);
