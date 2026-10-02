@@ -13,6 +13,11 @@
 #include "freertos/event_groups.h"
 #include <stdio.h>
 #include <time.h>
+#include "freertos/projdefs.h"
+#include "portmacro.h"
+#include "wifi.h"
+#include "freertos/task.h"
+#include "esp_random.h"
 
 #define MQTT_CONNECTED_BIT BIT0
 
@@ -24,6 +29,14 @@ static char telemetry_topic[64];
 static char status_topic[64];
 static const char status_suffix[] = "status";
 static const char telemetry_suffix[] = "telemetry";
+static const int mqtt_reconnect_stack = 4096;
+static const int mqtt_reconnect_priority = 3;
+static const int base_mqtt_reconnect_time_ms = 10000;
+static const int max_mqtt_reconnect_time_ms = 300000;
+static const int wifi_check_interval_ms = 1000;
+static const int mqtt_max_reconnect_tries = 5;
+static const int reconnect_stable_limit_ms = 60000;
+static TaskHandle_t mqtt_reconnect_handle;
 
 bool mqtt_service_is_connected(void){
     if (mqtt_event == NULL){
@@ -102,6 +115,9 @@ static void mqtt_event_handler(void* handler_args, esp_event_base_t event_base, 
         case MQTT_EVENT_CONNECTED:{
             xEventGroupSetBits(mqtt_event, MQTT_CONNECTED_BIT);
             ESP_LOGI(TAG, "connected to MQTT broker");
+            if (mqtt_reconnect_handle != NULL){
+                xTaskNotifyGive(mqtt_reconnect_handle);
+            }
             int message_id = esp_mqtt_client_enqueue(event->client, status_topic, "online", 0, 1, true, true);
             if (message_id < 0){
                 ESP_LOGE(TAG, "Failed to enqueue online status, id: %d", message_id);
@@ -112,7 +128,14 @@ static void mqtt_event_handler(void* handler_args, esp_event_base_t event_base, 
         }
         case MQTT_EVENT_DISCONNECTED:{
             xEventGroupClearBits(mqtt_event, MQTT_CONNECTED_BIT);
-            ESP_LOGW(TAG, "Disconnected from MQTT broker");
+            if (wifi_is_connected() == true){
+                ESP_LOGW(TAG, "MQTT lost contact with broker");
+            }else {
+                ESP_LOGW(TAG, "MQTT Disconnected, waiting for wifi");
+            }
+            if (mqtt_reconnect_handle != NULL){
+                xTaskNotifyGive(mqtt_reconnect_handle);
+            }
             break;
         }
         case MQTT_EVENT_PUBLISHED:{
@@ -152,21 +175,104 @@ esp_err_t mqtt_service_copy_device_id(char *device_id, size_t device_id_size){
     return ESP_OK;
 }
 
+static int mqtt_service_update_reconnect_time(const int reconnect_count){
+    int reconnect_time = base_mqtt_reconnect_time_ms;
+    for (int i = 0; i < reconnect_count; i++){
+        if (reconnect_time > max_mqtt_reconnect_time_ms / 2){
+            reconnect_time = max_mqtt_reconnect_time_ms;
+            break;
+        }else {
+            reconnect_time = reconnect_time * 2;
+        }
+    }
+    int jitter = esp_random() % 1001;
+    int total_reconnect_time_ms = reconnect_time + jitter;
+    if (total_reconnect_time_ms > max_mqtt_reconnect_time_ms){
+        total_reconnect_time_ms = max_mqtt_reconnect_time_ms;
+    }
+    return total_reconnect_time_ms;
+}
+
+static void mqtt_service_reconnect_task(void *param){
+    (void)param;
+    int reconnect_count = 0;
+
+    while(true){
+        uint32_t notification_count = ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
+        ESP_LOGI(TAG, "Reconnect task notified, count %lu", (unsigned long)notification_count);
+        TickType_t time_start = xTaskGetTickCount();
+        if (mqtt_service_is_connected() == true){
+            while(true){
+                TickType_t elapsed = xTaskGetTickCount() - time_start;
+
+                if (elapsed >= pdMS_TO_TICKS(reconnect_stable_limit_ms)){
+                    if (mqtt_service_is_connected() == true){
+                        ESP_LOGI(TAG, "MQTT connection stable.");
+                        reconnect_count = 0;
+                        break;
+                    }else {
+                        break;
+                    }
+                }
+
+                TickType_t remaining = pdMS_TO_TICKS(reconnect_stable_limit_ms) - elapsed;
+                uint32_t reconnect_notification = ulTaskNotifyTake(pdTRUE, remaining);
+
+                if (reconnect_notification > 0){
+                    if (mqtt_service_is_connected() == false){
+                        break;
+                    }else {
+                        continue;
+                    }
+                }
+            }
+        }
+        while (mqtt_service_is_connected() != true){
+            if (wifi_is_connected() != true){
+                ESP_LOGI(TAG, "Waiting for wifi to connect");
+                while (wifi_is_connected() != true){
+                    vTaskDelay(pdMS_TO_TICKS(wifi_check_interval_ms));
+                }
+                ESP_LOGI(TAG, "Wifi connection is back");
+            }
+            int total_reconnect_time_ms = mqtt_service_update_reconnect_time(reconnect_count);
+            ESP_LOGI(TAG, "MQTT retry in %d seconds", total_reconnect_time_ms / 1000);
+            vTaskDelay(pdMS_TO_TICKS(total_reconnect_time_ms));
+            if (mqtt_service_is_connected() == true){
+                break;
+            }
+            if( wifi_is_connected() != true){
+                continue;
+            }
+            esp_err_t ret = esp_mqtt_client_reconnect(mqtt_client);
+            if (reconnect_count < mqtt_max_reconnect_tries){
+                reconnect_count++;
+            }
+            if (ret != ESP_OK){
+                ESP_LOGE(TAG, "MQTT service failed to reconnect: %s", esp_err_to_name(ret));
+                continue;
+            }else {
+                break;
+            }
+        }
+    }
+}
+
 esp_err_t mqtt_service_start(void){
     if (mqtt_event != NULL){
         ESP_LOGE(TAG, "MQTT event already started.");
         return ESP_ERR_INVALID_STATE;
     }
-    esp_err_t ret;
+    esp_err_t err_ret;
 
-    ret = create_device_id(client_id, sizeof(client_id));
-    ESP_RETURN_ON_ERROR(ret, TAG, "Failed to create id: %s", esp_err_to_name(ret));
+    err_ret = create_device_id(client_id, sizeof(client_id));
+    ESP_RETURN_ON_ERROR(err_ret, TAG, "Failed to create id: %s", esp_err_to_name(err_ret));
     ESP_LOGI(TAG, "Device id: %s", client_id);
-    ret = create_mqtt_topic(telemetry_topic, sizeof(telemetry_topic), telemetry_suffix);
-    ESP_RETURN_ON_ERROR(ret, TAG, "Failed to create mqtt topic: %s", esp_err_to_name(ret));
+    err_ret = create_mqtt_topic(telemetry_topic, sizeof(telemetry_topic), telemetry_suffix);
+    ESP_RETURN_ON_ERROR(err_ret, TAG, "Failed to create mqtt topic: %s", esp_err_to_name(err_ret));
     ESP_LOGI(TAG, "mqtt telemetry topic: %s", telemetry_topic);
-    ret = create_mqtt_topic(status_topic, sizeof(status_topic), status_suffix);
-    ESP_RETURN_ON_ERROR(ret, TAG, "failed to create status topic: %s", esp_err_to_name(ret));
+    err_ret = create_mqtt_topic(status_topic, sizeof(status_topic), status_suffix);
+    ESP_RETURN_ON_ERROR(err_ret, TAG, "failed to create status topic: %s", esp_err_to_name(err_ret));
     ESP_LOGI(TAG, "mqtt status topic: %s", status_topic);
     mqtt_event = xEventGroupCreate();
     if (mqtt_event == NULL){
@@ -183,7 +289,8 @@ esp_err_t mqtt_service_start(void){
         .session.last_will.msg = "offline",
         .session.last_will.qos = 1,
         .session.last_will.retain = true,
-        .session.keepalive = 60
+        .session.keepalive = 60,
+        .network.disable_auto_reconnect = true
     };
 
     mqtt_client = esp_mqtt_client_init(&mqtt_cfg);
@@ -193,23 +300,35 @@ esp_err_t mqtt_service_start(void){
         mqtt_event = NULL;
         return ESP_FAIL;
     }
-    ret = esp_mqtt_client_register_event(mqtt_client, ESP_EVENT_ANY_ID, mqtt_event_handler, NULL);
-    if(ret != ESP_OK){
-        ESP_LOGE(TAG, "MQTT event failed: %s", esp_err_to_name(ret));
+    err_ret = esp_mqtt_client_register_event(mqtt_client, ESP_EVENT_ANY_ID, mqtt_event_handler, NULL);
+    if(err_ret != ESP_OK){
+        ESP_LOGE(TAG, "MQTT event failed: %s", esp_err_to_name(err_ret));
         esp_mqtt_client_destroy(mqtt_client);
         mqtt_client = NULL;
         vEventGroupDelete(mqtt_event);
         mqtt_event = NULL;
-        return ret;
+        return err_ret;
     }
-    ret = esp_mqtt_client_start(mqtt_client);
-    if (ret != ESP_OK){
-        ESP_LOGE(TAG, "MQTT client failed to start: %s", esp_err_to_name(ret));
+    BaseType_t bt_ret = xTaskCreate(mqtt_service_reconnect_task, "mqtt reconnect", mqtt_reconnect_stack, NULL, mqtt_reconnect_priority, &mqtt_reconnect_handle);
+    if (bt_ret != pdPASS){
+        ESP_LOGE(TAG, "Failed to create reconnect task.");
+        mqtt_reconnect_handle = NULL;
         esp_mqtt_client_destroy(mqtt_client);
         mqtt_client = NULL;
         vEventGroupDelete(mqtt_event);
         mqtt_event = NULL;
-        return ret;
+        return ESP_FAIL;
+    }
+    err_ret = esp_mqtt_client_start(mqtt_client);
+    if (err_ret != ESP_OK){
+        ESP_LOGE(TAG, "MQTT client failed to start: %s", esp_err_to_name(err_ret));
+        vTaskDelete(mqtt_reconnect_handle);
+        mqtt_reconnect_handle = NULL;
+        esp_mqtt_client_destroy(mqtt_client);
+        mqtt_client = NULL;
+        vEventGroupDelete(mqtt_event);
+        mqtt_event = NULL;
+        return err_ret;
     }
     ESP_LOGI(TAG, "MQTT Client started");
 

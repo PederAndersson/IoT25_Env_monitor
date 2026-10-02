@@ -26,6 +26,13 @@ static esp_event_handler_instance_t s_wifi_handler_instance;
 static esp_event_handler_instance_t s_ip_handler_instance;
 static int retry_counter = 0;
 
+bool wifi_is_connected(void){
+    if (s_wifi_event_group == NULL){
+        return false;
+    }
+    return (xEventGroupGetBits(s_wifi_event_group) & WIFI_CONNECTED_BIT) != 0;
+}
+
 static void wifi_event_handler(void *arg, esp_event_base_t event_base, int32_t event_id, void *event_data){
     (void)arg;
     esp_err_t ret;
