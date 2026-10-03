@@ -53,11 +53,29 @@ def decode_payload(payload_bytes):
 required_fields = ["sensorId", "timestamp", "humidity_value", "humidity_unit", "temperature_value", "temperature_unit"]
 
 def validate_reading(reading):
+    if not isinstance(reading, dict):
+        return False, "Reading not a python object"
     for field in required_fields:
         if field not in reading:
             return False, f"Payload is missing {field}"
     if not isinstance(reading["timestamp"], str):
-        return False, "timestamp not a string"
+        return False, "Timestamp not a string"
+    if not isinstance(reading["humidity_value"], float):
+        return False, "Humidity value must be a float"
+    if (reading["humidity_value"] > 90 or reading["humidity_value"] < 20):
+        return False, f"Humidity value invalid {reading["humidity_value"]}"
+    if not isinstance(reading["humidity_unit"], str):
+        return False, "Humidity unit must be a string"
+    if reading["humidity_unit"] != "%":
+        return False, "Humidity unit must be a %"
+    if not isinstance(reading["temperature_value"], float):
+        return False, "Temperature value must be a float"
+    if (reading["temperature_value"] > 50 or reading["temperature_value"] < 0):
+        return False, f"Temperature value invalid {reading["temperature_value"]}"
+    if not isinstance(reading["temperature_unit"], str):
+        return False, "Temperature unit must be a string"
+    if reading["temperature_unit"] != "C":
+        return False, "Temperature unit must be a C"
     return True, "Payload validated"
 
 def process_payload(payload_bytes):
@@ -93,21 +111,33 @@ def on_disconnect(client, userdata, disconnect_flags, reason_code, properties):
         logger.warning(f"Connection to MQTT broker lost: {reason_code}")
 
 def main():
-    initialize_database()
-    client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2)
-    client.username_pw_set(
-        os.getenv("MQTT_USERNAME"),
-        os.getenv("MQTT_PASSWORD")
-    )
-    broker = os.getenv("MQTT_BROKER", "100.84.116.70")
-    port = int(os.getenv("MQTT_PORT", "8883"))
-    ca_cert_path = os.getenv("MQTT_CA_PATH", str(CA_CERT_PATH))
-    client.tls_set(ca_certs=ca_cert_path)
-    client.on_connect = on_connect
-    client.on_message = on_message
-    client.on_disconnect = on_disconnect
-    client.connect(broker, port, 60)
-    client.loop_forever()
+    broker = os.getenv("MQTT_BROKER")
+    port = os.getenv("MQTT_PORT")
+    if not broker or not port:
+        logger.error("Env variable missing")
+        return 1
+    else:
+        try:
+            port = int(port)
+        except ValueError:
+            logger.error("MQTT_PORT must be an integer")
+            return 1
+        if port < 1 or port > 65535:
+            logger.error("Invalid port value, must be within 1-65535")
+            return 1
+        initialize_database()
+        client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2)
+        client.username_pw_set(
+            os.getenv("MQTT_USERNAME"),
+            os.getenv("MQTT_PASSWORD")
+        )
+        ca_cert_path = os.getenv("MQTT_CA_PATH", str(CA_CERT_PATH))
+        client.tls_set(ca_certs=ca_cert_path)
+        client.on_connect = on_connect
+        client.on_message = on_message
+        client.on_disconnect = on_disconnect
+        client.connect(broker, port, 60)
+        client.loop_forever()
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

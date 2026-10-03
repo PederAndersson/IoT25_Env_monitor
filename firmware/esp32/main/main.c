@@ -23,14 +23,14 @@ void app_main(void)
             ret = mqtt_service_start();
             if(ret == ESP_OK){
                 ESP_LOGI(TAG, "MQTT client started");
+                ret = telemetry_service_start();
+                if (ret == ESP_OK){
+                    ESP_LOGI(TAG, "Sensor telemetry service started.");
+                }else{
+                    ESP_LOGE(TAG, "Sensor telemetry failed to start.");
+                }
             }else {
                 ESP_LOGE(TAG, "MQTT client failed to start, %s", esp_err_to_name(ret));
-            }
-            ret = telemetry_service_start();
-            if (ret == ESP_OK){
-                ESP_LOGI(TAG, "Sensor telemetry service started.");
-            }else{
-                ESP_LOGE(TAG, "Sensor telemetry failed to start.");
             }
         }
         else {
