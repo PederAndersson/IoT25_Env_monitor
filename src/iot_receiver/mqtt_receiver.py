@@ -4,6 +4,8 @@ import json
 import logging
 import sqlite3
 from pathlib import Path
+from datetime import datetime
+
 
 logging.basicConfig(
     level=logging.INFO,
@@ -50,6 +52,13 @@ def decode_payload(payload_bytes):
     reading = json.loads(payload_bytes)
     return reading
 
+def is_valid_timestamp(timestamp):
+    try:
+        datetime.strptime(timestamp, "%Y-%m-%dT%H:%M:%SZ")
+        return True
+    except ValueError:
+        return False
+
 required_fields = ["sensorId", "timestamp", "humidity_value", "humidity_unit", "temperature_value", "temperature_unit"]
 
 def validate_reading(reading):
@@ -58,8 +67,12 @@ def validate_reading(reading):
     for field in required_fields:
         if field not in reading:
             return False, f"Payload is missing {field}"
+    if not isinstance(reading["sensorId"], str):
+        return False, "Sensor id must be a string"
     if not isinstance(reading["timestamp"], str):
-        return False, "Timestamp not a string"
+        return False, "Timestamp must be a string"
+    if is_valid_timestamp(reading["timestamp"]) != True:
+        return False, "Timestamp must be YYYY-MM-DDTHH:MM:SSZ"
     if not isinstance(reading["humidity_value"], float):
         return False, "Humidity value must be a float"
     if (reading["humidity_value"] > 90 or reading["humidity_value"] < 20):
