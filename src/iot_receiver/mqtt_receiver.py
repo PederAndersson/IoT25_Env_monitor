@@ -54,9 +54,12 @@ def decode_payload(payload_bytes):
 
 def is_valid_timestamp(timestamp):
     try:
-        datetime.strptime(timestamp, "%Y-%m-%dT%H:%M:%SZ")
-        return True
-    except ValueError:
+        parsed_timestamp = datetime.fromisoformat(timestamp)
+        return (
+            parsed_timestamp.tzinfo is not None
+            and parsed_timestamp.utcoffset() is not None
+        )
+    except (TypeError, ValueError):
         return False
 
 required_fields = ["sensorId", "timestamp", "humidity_value", "humidity_unit", "temperature_value", "temperature_unit"]
@@ -67,12 +70,12 @@ def validate_reading(reading):
     for field in required_fields:
         if field not in reading:
             return False, f"Payload is missing {field}"
-    if not isinstance(reading["sensorId"], str):
-        return False, "Sensor id must be a string"
+    if not isinstance(reading["sensorId"], str) or not reading["sensorId"].strip():
+        return False, "Sensor id must be a non-empty string"
     if not isinstance(reading["timestamp"], str):
         return False, "Timestamp must be a string"
     if is_valid_timestamp(reading["timestamp"]) != True:
-        return False, "Timestamp must be YYYY-MM-DDTHH:MM:SSZ"
+        return False, "Timestamp must be ISO 8601 with a timezone"
     if not isinstance(reading["humidity_value"], float):
         return False, "Humidity value must be a float"
     if (reading["humidity_value"] > 90 or reading["humidity_value"] < 20):
