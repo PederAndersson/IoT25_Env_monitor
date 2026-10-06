@@ -2,8 +2,10 @@
 #include "esp_err.h"
 #include "esp_netif_ip_addr.h"
 #include "esp_netif_types.h"
+#include "esp_random.h"
 #include "esp_wifi_default.h"
 #include "esp_wifi_types_generic.h"
+#include "freertos/projdefs.h"
 #include "nvs_flash.h"
 #include "esp_log.h"
 #include "esp_check.h"
@@ -13,7 +15,9 @@
 #include "freertos/task.h"
 #include "esp_event.h"
 #include "esp_wifi.h"
+#include "portmacro.h"
 #include"sdkconfig.h"
+#include <stdint.h>
 
 #define WIFI_CONNECTED_BIT BIT0
 #define WIFI_FAIL_BIT BIT1
@@ -24,7 +28,13 @@ static const char* TAG = "Wifi Station";
 static EventGroupHandle_t s_wifi_event_group = NULL;
 static esp_event_handler_instance_t s_wifi_handler_instance;
 static esp_event_handler_instance_t s_ip_handler_instance;
-static int retry_counter = 0;
+static TaskHandle_t wifi_reconnect_handle;
+static bool wifi_connected_once = false;
+static const int wifi_task_stack_size = 4095;
+static const int wifi_task_priority = 6;
+static const int base_wifi_reconnect_time_ms = 1000;
+static int wifi_reconnect_time_ms = 1000;
+static const int max_wifi_reconnect_time_ms = 30000;
 
 bool wifi_is_connected(void){
     if (s_wifi_event_group == NULL){
@@ -48,26 +58,74 @@ static void wifi_event_handler(void *arg, esp_event_base_t event_base, int32_t e
         const wifi_event_sta_disconnected_t *disconnected = (const wifi_event_sta_disconnected_t *)event_data;
         ESP_LOGW(TAG, "WiFi disconnected, reason: %d", disconnected->reason);
         xEventGroupClearBits(s_wifi_event_group, WIFI_CONNECTED_BIT);
-        if (retry_counter < MAXIMUM_RETRY){
-            retry_counter++;
-            ESP_LOGI(TAG,"Reconnect attempt %d of %d", retry_counter, MAXIMUM_RETRY);
-            ret = esp_wifi_connect();
-            if (ret != ESP_OK){
-                ESP_LOGE(TAG, "WiFi connect failed: %s", esp_err_to_name(ret));
-                xEventGroupSetBits(s_wifi_event_group, WIFI_FAIL_BIT);
-            }
-        }
-        else {
-            ESP_LOGE(TAG, "maximum number of retries reached");
-            xEventGroupSetBits(s_wifi_event_group, WIFI_FAIL_BIT);
+        if (wifi_reconnect_handle != NULL){
+            xTaskNotifyGive(wifi_reconnect_handle);
         }
     }
     else if (event_base == IP_EVENT && event_id == IP_EVENT_STA_GOT_IP){
         const ip_event_got_ip_t *ip_event = (const ip_event_got_ip_t *)event_data;
         ESP_LOGI(TAG, "Got IP address: " IPSTR, IP2STR(&ip_event->ip_info.ip));
-        retry_counter = 0;
         xEventGroupClearBits(s_wifi_event_group, WIFI_FAIL_BIT);
         xEventGroupSetBits(s_wifi_event_group, WIFI_CONNECTED_BIT);
+        wifi_connected_once = true;
+        wifi_reconnect_time_ms = base_wifi_reconnect_time_ms;
+    }
+}
+
+static void wifi_reconnect_time_update(int *reconnect_time){
+
+    if (*reconnect_time > max_wifi_reconnect_time_ms / 2){
+        *reconnect_time = max_wifi_reconnect_time_ms;
+    }else {
+        *reconnect_time = *reconnect_time * 2;
+    }
+}
+
+static void wifi_reconnect_task(void *param){
+    (void)param;
+    esp_err_t ret;
+    int retry_counter = 0;
+    
+    while (true){
+        uint32_t reconnect_notify = ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
+        if(wifi_is_connected() == true){
+            continue;
+        }
+        ESP_LOGI(TAG, "Wifi reconnect task notified: %lu", (unsigned long)reconnect_notify);
+        if (wifi_connected_once != true){
+            if (retry_counter < MAXIMUM_RETRY){
+                retry_counter++;
+                ESP_LOGI(TAG,"Reconnect attempt %d of %d", retry_counter, MAXIMUM_RETRY);
+                ret = esp_wifi_connect();
+                if (ret != ESP_OK){
+                    ESP_LOGE(TAG, "WiFi reconnect failed: %s", esp_err_to_name(ret));
+                    xEventGroupSetBits(s_wifi_event_group, WIFI_FAIL_BIT);
+                }
+            }
+            else {
+                ESP_LOGE(TAG, "maximum number of retries reached");
+                xEventGroupSetBits(s_wifi_event_group, WIFI_FAIL_BIT);
+            }
+        }else {
+            int wait_time_ms = wifi_reconnect_time_ms + (esp_random() % 1001);
+            if (wait_time_ms > 30000) {wait_time_ms = max_wifi_reconnect_time_ms;}
+            ESP_LOGI(TAG, "Reconnect wait time: %d", wait_time_ms);
+            vTaskDelay(pdMS_TO_TICKS(wait_time_ms));
+            if(wifi_is_connected() == true){
+                continue;
+            }
+            wifi_reconnect_time_update(&wifi_reconnect_time_ms);
+            ret = esp_wifi_connect();
+            if (ret == ESP_OK){
+                ESP_LOGI(TAG, "Wifi connection attempt started.");
+            }else{
+                retry_counter++;
+                ESP_LOGE(TAG, "WiFi reconnect failed: %s tries: %d", esp_err_to_name(ret), retry_counter);
+                xTaskNotifyGive(wifi_reconnect_handle);
+                continue;
+            }
+        }
+
     }
 }
 
@@ -114,6 +172,13 @@ esp_err_t wifi_init(void){
             .threshold.authmode = WIFI_AUTH_WPA2_PSK
         }
     };
+
+    BaseType_t bt_ret = xTaskCreate(wifi_reconnect_task, "wifi reconnect", wifi_task_stack_size, NULL, wifi_task_priority, &wifi_reconnect_handle);
+    if (bt_ret != pdPASS){
+        ESP_LOGE(TAG, "Failed to create Reconnect task");
+        wifi_reconnect_handle = NULL;
+        return ESP_FAIL;
+    }
 
     ret = esp_wifi_set_mode(WIFI_MODE_STA);
     ESP_RETURN_ON_ERROR(ret, TAG, "failed to set wifi mode");

@@ -129,9 +129,25 @@ värdnamn och andra hemligheter innan de sparas.
   mätintervall.
 - **Förväntat:** Loggen visar WiFi, NTP, MQTT och telemetry i den ordningen
   samt tre lyckade fysiska mätningar med ungefär konfigurerat intervall.
-- **Faktiskt resultat:** Inte registrerat.
-- **Status:** Ej körd.
-- **Datum och bevis:** Anteckna tider och relevanta anonymiserade loggrader.
+- **Faktiskt resultat:** Nyflashad firmware rapporterade appversion `66fc445`.
+  WiFi var redo 13:54:14 och NTP synkroniserades 13:54:18. MQTT-klienten
+  startade 13:54:18, men första sensormätningen köades samma sekund,
+  innan certifikatkedjan validerades 13:54:21 och MQTT anslöts 13:54:23.
+  Ytterligare mätningar köades 13:55:18 och 13:56:18; alla tre publicerades.
+  Intervallen var 60 sekunder enligt lokal konfiguration. I firmwarekoden
+  nås köningen endast efter lyckad `dht_11_read` och tidsstämpling; själva
+  mätvärdena skrivs inte ut i denna monitorlogg. Den första mätningen
+  väntade i kön medan MQTT anslöt och publicerades därefter. Därmed är
+  WiFi och NTP före TLS verifierade, liksom sensoravläsning och periodicitet,
+  men strikt ordning med färdig MQTT/TLS-anslutning före telemetri uppnåddes
+  inte. Mätvärden och hela kedjan verifieras separat i M-03.
+- **Status:** Underkänd enligt testplanens strikta uppstartsordning; de
+  övriga delarna ovan fungerade. Behöver kravtolkning eller ändring och
+  omtest innan M-02 kan markeras Godkänd.
+- **Datum och bevis:** 2026-10-05, ignorerad rålogg
+  `data/esp32-monitor-2026-10-05-postflash.log`, rader 38, 149, 153,
+  159–184. Råloggen innehåller lokala nätverksidentifierare och ska inte
+  läggas till i Git.
 
 ### M-03 – Sammanhängande end-to-end-flöde
 
@@ -139,14 +155,32 @@ värdnamn och andra hemligheter innan de sparas.
 - **Syfte:** Följa samma fysiska mätning genom hela systemet.
 - **Lokala förutsättningar:** ESP32 kör, TLS-brokern är nåbar och de lokala
   Python-tjänsterna eller Compose är startade.
-- **Steg:** Notera ett sensor-ID och en tidsstämpel i ESP32-loggen; bekräfta
-  samma payload i mottagarloggen; hämta senaste mätningen och historiken via
-  API:t.
+- **Steg:** Notera sensor-ID och en tidsstämplad publicering i ESP32-loggen;
+  jämför en tidsmässigt matchande payload i mottagarloggen med mätningen i
+  API-historiken. Firmwareloggen skriver inte ut hela JSON-payloaden.
 - **Förväntat:** Samma sex fält och värden kan följas från DHT11 till API,
   och minst tre periodiska poster lagras.
-- **Faktiskt resultat:** Inte registrerat.
-- **Status:** Ej körd.
-- **Datum och bevis:** Spara anonymiserade loggutdrag och API-svar.
+- **Faktiskt resultat:** ESP32 köade en fysisk sensormätning 14:16:22 lokal
+  tid (12:16:22 UTC) och rapporterade MQTT-publicering 14:16:25. Den lokala
+  mottagaren tog emot `esp-test/<device-id>/telemetry` 12:16:25–26 UTC och
+  validerade sex fält med tidsstämpeln `2026-10-05T12:16:22Z`, luftfuktighet
+  48,0 % och temperatur 25,0 °C. API-historiken returnerade samma fält och
+  värden. Mottagarloggen visade även mätningar ungefär varje minut 12:09–12:13;
+  API-status ökade från 12 till 13 poster mellan mätningarna 12:10:18Z och
+  12:11:18Z.
+  **Öppen avvikelse O-01:** Mätningen 12:16:22Z togs emot och lagrades tre
+  gånger (databas-ID 22–24), trots en köning och en publiceringsbekräftelse
+  i den fångade firmwareloggen. Sju tidsstämplar hade 2–4 poster vardera
+  vid senare kontroll. Mottagaren sparar varje mottaget meddelande separat;
+  orsaken till upprepade leveranser är inte fastställd.
+- **Status:** Godkänd för sammanhängande sexfältsflöde och periodisk lagring.
+  O-01 är en olöst begränsning; antal databasrader är inte säkert antal
+  unika sensormätningar.
+- **Datum och bevis:** 2026-10-05, ignorerad rålogg
+  `data/esp32-monitor-2026-10-05-e2e.log`, anonymiserade mottagarloggar
+  12:09–12:16 UTC och svar från `/api/v1/readings?limit=10` samt
+  `/api/v1/status`. Råloggar med nätverksidentifierare ska inte läggas till
+  i Git.
 
 ### M-04 – MQTT-identitet och status
 
@@ -158,9 +192,15 @@ värdnamn och andra hemligheter innan de sparas.
   observera status och telemetri utan att avsiktligt bryta nätverket.
 - **Förväntat:** MAC-baserat stabilt ID används; retained `online` finns på
   status-topic; telemetri ligger på rätt topic med QoS 1.
-- **Faktiskt resultat:** Inte registrerat.
-- **Status:** Ej körd.
-- **Datum och bevis:** Anteckna anonymiserat topic, status och message-ID.
+- **Faktiskt resultat:** Firmware loggade samma enhets-ID och topics vid
+  flera starter. En separat prenumerant fick `online retained=True` och
+  QoS 1 vid anslutning 12:50:46 UTC. Under F-02 kom live-`offline` med
+  QoS 1; en ny prenumerant fick `offline retained=True`. Telemetry-topic
+  verifierades i mottagarloggen, men dess QoS och keepalive mättes inte
+  separat i detta test.
+- **Status:** Delvis verifierad; ännu inte Godkänd för hela M-04.
+- **Datum och bevis:** 2026-10-05, anonymiserade prenumerantrader och
+  firmware-/mottagarloggar. Enhets-ID maskerat i detta protokoll.
 
 ### M-05 – TLS-kedja och hostname
 
@@ -173,10 +213,18 @@ värdnamn och andra hemligheter innan de sparas.
   SAN; återställ därefter lokal konfiguration.
 - **Förväntat:** Korrekt konfiguration ansluter. Fel CA eller hostname ger
   TLS-fel och ingen osäker fallback eller publicering.
-- **Faktiskt resultat:** Inte registrerat.
-- **Status:** Ej körd.
-- **Datum och bevis:** Spara endast certifikatets publika metadata och
-  anonymiserade felmeddelanden.
+- **Faktiskt resultat:** ESP32 loggade certifikatvalidering före MQTT-
+  anslutning. Pythonklienterna i de redan körande containrarna anslöt med
+  TLS. En ny Pythonanslutning från värdmiljön avvisades däremot med
+  `SSLCertVerificationError: Hostname mismatch`; ingen osäker fallback
+  användes. Om värdmiljön, containerns lagrade miljö och broker-certifikat
+  överensstämmer är ännu inte utrett. Separata negativa CA- och hostname-
+  injektioner har inte körts.
+- **Status:** Ej färdigverifierad; värdnamnsavvikelsen måste utredas före
+  Godkänd status.
+- **Datum och bevis:** 2026-10-05, anonymiserad TLS-feltext och
+  `Certificate validated` i firmwareloggen. Inga värdnamn eller hemligheter
+  återges här.
 
 ### M-06 – Lokal Pythonstart
 
@@ -201,9 +249,13 @@ värdnamn och andra hemligheter innan de sparas.
   down` och starta igen; hämta samma post via API.
 - **Förväntat:** Konfigurationen är giltig, API blir healthy och posten finns
   kvar efter att containrarna återskapats.
-- **Faktiskt resultat:** Inte registrerat.
-- **Status:** Ej körd.
-- **Datum och bevis:** Spara anonymiserad `docker compose ps` och API-svar.
+- **Faktiskt resultat:** `docker compose config -q` avslutades utan fel.
+  Befintliga containrar startades utan ombygge; `docker compose ps` visade
+  API som healthy och mottagaren som up. API:t returnerade lagrade och nya
+  mätningar. Återskapande av containrar och efterföljande persistenskontroll
+  genomfördes inte; den körande imagen kan vara äldre än aktuell källkod.
+- **Status:** Delvis verifierad; persistens efter återskapande återstår.
+- **Datum och bevis:** 2026-10-05, lokal Compose-status och API-svar.
 
 ### M-08 – Loggning
 
@@ -215,9 +267,15 @@ värdnamn och andra hemligheter innan de sparas.
   återanslutning i firmware- och Pythonloggar; sök visuellt efter hemligheter.
 - **Förväntat:** Alla händelsetyper loggas med användbar kontext men utan
   lösenord eller tokens.
-- **Faktiskt resultat:** Inte registrerat.
-- **Status:** Ej körd.
-- **Datum och bevis:** Spara korta anonymiserade loggutdrag.
+- **Faktiskt resultat:** Firmware loggade WiFi/MQTT-anslutning,
+  publicering, kommunikationsfel och köstorlek. Pythonmottagaren loggade
+  mottagen och validerad data samt avvisad ogiltig JSON. Återanslutning
+  efter kort avbrott observerades, men inte efter långt avbrott (F-02).
+  En fullständig logggranskning efter hemligheter är inte genomförd; råa
+  firmwareloggar innehåller lokala nätverksidentifierare.
+- **Status:** Delvis verifierad; ännu inte Godkänd för hela M-08.
+- **Datum och bevis:** 2026-10-05, anonymiserade loggutdrag i M-02, M-03,
+  F-01 och F-02.
 
 ### M-09 – Övervakningsmått
 
@@ -228,9 +286,15 @@ värdnamn och andra hemligheter innan de sparas.
   köstorlek och räknare för tappade mätningar i relevant firmwaretest.
 - **Förväntat:** `storedReadings` ökar med ett och firmwareloggar aktuell
   kö-/felstatistik.
-- **Faktiskt resultat:** Inte registrerat.
-- **Status:** Ej körd.
-- **Datum och bevis:** Spara API-svaren och anonymiserade loggrader.
+- **Faktiskt resultat:** `/api/v1/status` ökade från 12 till 13 lagrade
+  poster mellan mätningarna 12:10:18Z och 12:11:18Z. Under F-02 visade
+  firmware kön växa till 8/60 samt kommunikationsfel. Måttet räknar
+  databasrader, inte unika mätningar (se O-01); tappade mätningar
+  provocerades inte eftersom kön inte fylldes.
+- **Status:** Godkänd för statusmått och köövervakning; dubbletter begränsar
+  tolkningen av `storedReadings`.
+- **Datum och bevis:** 2026-10-05, två lokala API-svar och ignorerad
+  firmwarelogg `data/esp32-monitor-2026-10-05-f02.log`.
 
 ### M-10 – Hemligheter och versionshantering
 
@@ -258,18 +322,27 @@ värdnamn och andra hemligheter innan de sparas.
 
 Obligatorisk felanalys efter körning:
 
-1. **Observerat symptom:** Ej registrerat.
-2. **Hur felet identifierades:** Ej registrerat.
-3. **Verktyg eller loggar:** Ej registrerat.
+1. **Observerat symptom:** Mottagaren loggade `Payload contains invalid JSON`
+   när testmeddelandet kom, men processen fortsatte köra.
+2. **Hur felet identifierades:** Ett avsiktligt `{invalid-json` publicerades
+   med QoS 1 på tillåtet telemetry-topic. En omkörning visade 64 lagrade
+   poster både före och två sekunder efter felmeddelandet.
+3. **Verktyg eller loggar:** Lokal TLS-verifierad MQTT-testklient,
+   `docker compose logs` och skrivskyddad SQLite-räkning.
 4. **Felets orsak:** Avsiktligt syntaktiskt ogiltig JSON.
-5. **Genomförd åtgärd:** Avsändaren ska rätta payloaden till dokumenterat
-   sexfältsformat; mottagaren ska fortsätta utan omstart.
-6. **Verifiering av åtgärd:** Ej registrerat; skicka därefter en giltig
-   payload och verifiera exakt en ny post.
+5. **Genomförd åtgärd:** Mottagaren avvisade payloaden utan att startas om;
+   därefter fortsatte den fysiska avsändaren med giltiga sexfältsmeddelanden.
+6. **Verifiering av åtgärd:** Antalet poster förblev 64 → 64 vid omkörningen.
+   Efter första felinjektionen validerades nya sensormeddelanden kl. 12:34:22
+   och 12:35:22 UTC. Exakt en rad per giltig mätning påstås inte på grund av
+   den separata dubblettavvikelsen O-01.
 
-- **Faktiskt resultat:** Inte registrerat.
-- **Status:** Ej körd.
-- **Datum och bevis:** Saknas.
+- **Faktiskt resultat:** Ogiltig JSON nådde mottagaren och gav en varning;
+  varken processens fortsättning eller antalet lagrade poster påverkades av
+  felmeddelandet.
+- **Status:** Godkänd.
+- **Datum och bevis:** 2026-10-05; anonymiserade mottagarloggar kl. 12:33:41,
+  12:34:22, 12:35:22 och 12:41:42 UTC samt före-/efterräkning 64 → 64.
 
 ## Avsiktligt fel F-02 – Oväntat nätverksavbrott
 
@@ -286,23 +359,47 @@ Obligatorisk felanalys efter körning:
 
 Obligatorisk felanalys efter körning:
 
-1. **Observerat symptom:** Ej registrerat.
-2. **Hur felet identifierades:** Ej registrerat.
-3. **Verktyg eller loggar:** Ej registrerat.
-4. **Felets orsak:** Avsiktligt avbruten nätverkskontakt mellan ESP32 och
-   brokern medan brokern fortsatte köra.
-5. **Genomförd åtgärd:** Återställ nätverket; klienterna ska återansluta utan
-   omstart eller osäker fallback.
-6. **Verifiering av åtgärd:** Ej registrerat; kontrollera `online`,
-   återanslutningslogg och en efterföljande fysisk mätning i API:t.
+1. **Observerat symptom:** Efter att endast ESP32:s WiFi brutits kom
+   `offline` från brokern. ESP32 loggade WiFi- och MQTT-fel och köade nya
+   mätningar, men anslöt inte automatiskt när hotspotten återkom.
+2. **Hur felet identifierades:** En separat prenumerant förblev ansluten och
+   såg `offline` 12:52:54 UTC. En ny prenumerant fick samma `offline` med
+   `retained=True` och QoS 1. Firmwareloggen visade fem WiFi-försök och
+   därefter inga nya; API:ts senaste tidsstämpel låg kvar på 12:51:52Z.
+3. **Verktyg eller loggar:** ESP-IDF-monitor, två TLS-verifierade
+   MQTT-prenumeranter och lokalt REST-API.
+4. **Felets orsak:** Avsiktligt avbruten WiFi-kontakt. I `wifi.c` stoppas
+   försöken när `CONFIG_APP_WIFI_MAXIMUM_RETRY` nås (5/5 kl. 12:53:03 UTC).
+   Inget senare försök schemaläggs, medan MQTT:s återanslutning väntar på
+   WiFi. Detta är en kodbegränsning, inte ett bevisat brokerfel.
+5. **Genomförd åtgärd:** Hotspotten återställdes, men det återupptog inte
+   anslutningen efter det långa avbrottet. En ändring för fortsatta WiFi-
+   återförsök med tidsavstånd behövs; ingen sådan kodändring hade ännu
+   verifierats vid denna körning.
+6. **Verifiering av åtgärd:** Fram till att monitorloggen avslutades kl.
+   13:01:41 UTC syntes ingen ny MQTT-anslutning; kön nådde minst 8/60 och
+   API:t stod kvar på 12:51:52Z. Ett separat, kortare avbrott återhämtade
+   sig senare utan reset: `offline` 13:09:38 och ny API-mätning 13:11:07Z.
+   Det visar att korta avbrott kan fungera, men löser inte det långa fallet.
 
-- **Faktiskt resultat:** Inte registrerat.
-- **Status:** Ej körd.
-- **Datum och bevis:** Saknas.
+- **Faktiskt resultat:** Last Will, retained `offline`, felrapportering och
+  köning fungerade. Automatisk återanslutning efter längre avbrott och
+  leverans av de köade mätningarna uteblev.
+- **Status:** Underkänd. Kräver ändrad WiFi-återanslutning och ny körning
+  med samma långa avbrott innan status kan bli Godkänd.
+- **Datum och bevis:** 2026-10-05, ignorerad rålogg
+  `data/esp32-monitor-2026-10-05-f02.log` samt anonymiserade
+  prenumerantrader 12:50:46 `online retained=True`, 12:52:54 `offline`,
+  12:56:57 `offline retained=True` och lokalt API-svar 12:51:52Z efter
+  återställd hotspot. Råloggar med nätverksidentifierare ska inte läggas
+  till i Git.
 
 ## Sammanfattning
 
-Inga manuella tester eller avsiktliga fel är godkända förrän fälten för
-faktiskt resultat, datum och bevis har fyllts i efter en ny körning. Ett
-underkänt test behåller statusen **Underkänd** tills orsaken har åtgärdats och
-samma test har körts om.
+Endast faktiskt observerade och daterade körningar markeras **Godkända**.
+M-03, M-09 och F-01 är godkända med O-01 som öppen dubblettavvikelse; M-02
+och F-02 är underkända enligt sina testkriterier. M-04, M-05, M-07 och
+M-08 är bara delvis verifierade; M-06 och M-10 är inte körda. M-05 har
+dessutom en ännu outredd värdnamnsavvikelse för en färsk Pythonanslutning.
+Ett underkänt test behåller statusen **Underkänd** tills orsaken har
+åtgärdats och samma test har körts om.
