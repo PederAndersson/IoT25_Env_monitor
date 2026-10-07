@@ -16,6 +16,7 @@ logger = logging.getLogger(__name__)
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 DATABASE_PATH = PROJECT_ROOT / "data" / "readings.db"
 CA_CERT_PATH = PROJECT_ROOT / "certs" / "ca.crt"
+TELEMETRY_TOPIC_FILTER = "esp-test/+/telemetry"
 
 def initialize_database():
     DATABASE_PATH.parent.mkdir(parents=True, exist_ok=True)
@@ -41,12 +42,27 @@ def save_reading(reading):
     cursor = connection.cursor()
     sql = """
     INSERT INTO readings(sensor_id, timestamp, humidity_value, humidity_unit, temperature_value, temperature_unit)
-    VALUES(?, ?, ?, ?, ?, ?)
+    SELECT ?, ?, ?, ?, ?, ?
+    WHERE NOT EXISTS (
+        SELECT 1 FROM readings
+        WHERE sensor_id = ? AND timestamp = ?
+    )
     """
-    values = (reading["sensorId"], reading["timestamp"], reading["humidity_value"], reading["humidity_unit"], reading["temperature_value"], reading["temperature_unit"])
+    values = (
+        reading["sensorId"],
+        reading["timestamp"],
+        reading["humidity_value"],
+        reading["humidity_unit"],
+        reading["temperature_value"],
+        reading["temperature_unit"],
+        reading["sensorId"],
+        reading["timestamp"],
+    )
     cursor.execute(sql, values)
+    was_inserted = cursor.rowcount == 1
     connection.commit()
     connection.close()
+    return was_inserted
 
 def decode_payload(payload_bytes):
     reading = json.loads(payload_bytes)
@@ -103,20 +119,48 @@ def process_payload(payload_bytes):
     is_valid, reason = validate_reading(reading)
     if is_valid:
         logger.info(f"{reason}: {reading}")
-        save_reading(reading)
+        if not save_reading(reading):
+            logger.info(
+                "Duplicate reading ignored: sensorId=%s timestamp=%s",
+                reading["sensorId"],
+                reading["timestamp"],
+            )
     else:
         logger.warning(reason)
 
 
+def is_telemetry_topic(topic):
+    parts = topic.split("/")
+    return (
+        len(parts) == 3
+        and parts[0] == "esp-test"
+        and bool(parts[1])
+        and parts[2] == "telemetry"
+    )
+
+
 def on_message(client, userdata, message):
-    logger.info(f"Received message on topic: {message.topic}")
+    if not is_telemetry_topic(message.topic):
+        logger.info(
+            "Ignoring non-telemetry MQTT message on topic: %s",
+            message.topic,
+        )
+        return
+    logger.info(
+        "Received telemetry on topic: %s qos=%s dup=%s mid=%s",
+        message.topic,
+        message.qos,
+        message.dup,
+        message.mid,
+    )
     process_payload(message.payload)
 
 def on_connect(client, userdata, connect_flags, reason_code, properties):
     if reason_code == 0:
         logger.info("Connected to MQTT broker")
-        client.subscribe("building/room-a/climate/#")
-        client.subscribe("esp-test/#")
+        result, _ = client.subscribe(TELEMETRY_TOPIC_FILTER, qos=1)
+        if result != mqtt.MQTT_ERR_SUCCESS:
+            logger.error("MQTT telemetry subscription failed: %s", result)
     else:
         logger.warning(f"Connection failed: {reason_code}")
 

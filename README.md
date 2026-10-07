@@ -68,7 +68,14 @@ cp .env.example .env
 - `MQTT_PORT`: TLS-porten, normalt `8883`;
 - `MQTT_USERNAME` och `MQTT_PASSWORD`: lokala MQTT-uppgifter;
 - valfritt `MQTT_CA_PATH`: sökväg till betrodd root-CA. Standard är
-  `certs/ca.crt`.
+  `certs/ca.crt`;
+- `HOST_UID` och `HOST_GID`: användar- och grupp-ID för den lokala
+  användaren. Standardvärdet `1000` passar vanliga Linuxinstallationer.
+  Kontrollera lokala värden med `id -u` respektive `id -g`.
+
+Compose kör tjänsterna med dessa ID:n så att SQLite-filen i den bind-mountade
+`data/`-katalogen förblir skrivbar både från containrarna och från en lokal
+Pythonprocess. Om ID:n inte är `1000` ska de lokala värdena anges i `.env`.
 
 Filen `.env` är ignorerad av Git. Lägg aldrig riktiga lösenord eller privata
 nycklar i versionshanterade filer.
@@ -182,7 +189,8 @@ finns i [testprotokollet](testprotokoll.md).
 ## Kända begränsningar
 
 - Telemetrikön ligger i RAM och förloras om ESP32 startas om.
-- QoS 1 kan ge dubbletter; mottagaren deduplicerar inte meddelanden.
+- QoS 1 kan ge dubbletter; mottagaren ignorerar därför en redan lagrad
+  kombination av `sensorId` och `timestamp`.
 - API:t har ingen egen autentisering och ska endast exponeras i en betrodd
   lokal miljö tills åtkomstkontroll har införts.
 - Godkänt firmwarebygge ersätter inte test med fysisk sensor, nätverk och

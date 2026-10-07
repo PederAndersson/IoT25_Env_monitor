@@ -5,7 +5,6 @@
 #include "esp_random.h"
 #include "esp_wifi_default.h"
 #include "esp_wifi_types_generic.h"
-#include "freertos/projdefs.h"
 #include "nvs_flash.h"
 #include "esp_log.h"
 #include "esp_check.h"

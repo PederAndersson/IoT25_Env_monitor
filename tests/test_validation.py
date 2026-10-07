@@ -158,3 +158,14 @@ def test_valid_reading_is_saved(valid_reading, monkeypatch):
     )
 
     assert saved_readings == [valid_reading]
+
+
+def test_duplicate_reading_is_logged(valid_reading, monkeypatch, caplog):
+    monkeypatch.setattr(mqtt_receiver, "save_reading", lambda reading: False)
+
+    with caplog.at_level(logging.INFO):
+        mqtt_receiver.process_payload(
+            mqtt_receiver.json.dumps(valid_reading).encode()
+        )
+
+    assert "Duplicate reading ignored" in caplog.text

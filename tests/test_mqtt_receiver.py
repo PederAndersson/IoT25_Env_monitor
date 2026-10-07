@@ -30,11 +30,13 @@ class FakeMqttClient:
 
 
 class FakeSubscriber:
-    def __init__(self):
+    def __init__(self, subscribe_result=mqtt_receiver.mqtt.MQTT_ERR_SUCCESS):
         self.topics = []
+        self.subscribe_result = subscribe_result
 
-    def subscribe(self, topic):
-        self.topics.append(topic)
+    def subscribe(self, topic, qos=0):
+        self.topics.append((topic, qos))
+        return self.subscribe_result, 1
 
 
 @pytest.mark.parametrize(
@@ -99,7 +101,58 @@ def test_on_connect_subscribes_to_expected_topics():
 
     mqtt_receiver.on_connect(client, None, None, 0, None)
 
-    assert client.topics == ["building/room-a/climate/#", "esp-test/#"]
+    assert client.topics == [("esp-test/+/telemetry", 1)]
+
+
+def test_non_telemetry_message_is_ignored(monkeypatch, caplog):
+    processed_payloads = []
+    message = type(
+        "Message",
+        (),
+        {
+            "topic": "esp-test/device-id/status",
+            "payload": b"online",
+        },
+    )()
+    monkeypatch.setattr(
+        mqtt_receiver,
+        "process_payload",
+        processed_payloads.append,
+    )
+
+    with caplog.at_level(logging.INFO):
+        mqtt_receiver.on_message(None, None, message)
+
+    assert processed_payloads == []
+    assert "Ignoring non-telemetry MQTT message" in caplog.text
+
+
+def test_telemetry_message_is_processed_with_mqtt_metadata(
+    monkeypatch, caplog
+):
+    processed_payloads = []
+    message = type(
+        "Message",
+        (),
+        {
+            "topic": "esp-test/device-id/telemetry",
+            "payload": b"{}",
+            "qos": 1,
+            "dup": True,
+            "mid": 42,
+        },
+    )()
+    monkeypatch.setattr(
+        mqtt_receiver,
+        "process_payload",
+        processed_payloads.append,
+    )
+
+    with caplog.at_level(logging.INFO):
+        mqtt_receiver.on_message(None, None, message)
+
+    assert processed_payloads == [b"{}"]
+    assert "qos=1 dup=True mid=42" in caplog.text
 
 
 def test_failed_connection_is_logged(caplog):

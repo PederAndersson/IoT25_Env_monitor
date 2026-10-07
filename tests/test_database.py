@@ -16,7 +16,7 @@ def test_database_initialization_is_idempotent(temporary_database):
 
 
 def test_reading_is_persisted(temporary_database, valid_reading):
-    mqtt_receiver.save_reading(valid_reading)
+    was_inserted = mqtt_receiver.save_reading(valid_reading)
 
     with sqlite3.connect(temporary_database) as connection:
         stored = connection.execute(
@@ -32,6 +32,39 @@ def test_reading_is_persisted(temporary_database, valid_reading):
         valid_reading["temperature_value"],
         valid_reading["temperature_unit"],
     )
+    assert was_inserted is True
+
+
+def test_duplicate_sensor_and_timestamp_is_not_persisted_twice(
+    temporary_database, valid_reading
+):
+    first_insert = mqtt_receiver.save_reading(valid_reading)
+    duplicate_insert = mqtt_receiver.save_reading(valid_reading)
+
+    with sqlite3.connect(temporary_database) as connection:
+        row_count = connection.execute(
+            "SELECT COUNT(*) FROM readings"
+        ).fetchone()[0]
+
+    assert first_insert is True
+    assert duplicate_insert is False
+    assert row_count == 1
+
+
+def test_same_timestamp_from_different_sensors_is_persisted(
+    temporary_database, valid_reading, reading_factory
+):
+    mqtt_receiver.save_reading(valid_reading)
+    mqtt_receiver.save_reading(
+        reading_factory(sensorId="esp32-112233445566")
+    )
+
+    with sqlite3.connect(temporary_database) as connection:
+        row_count = connection.execute(
+            "SELECT COUNT(*) FROM readings"
+        ).fetchone()[0]
+
+    assert row_count == 2
 
 
 def test_external_input_is_stored_as_data_not_sql(

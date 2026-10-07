@@ -45,7 +45,28 @@ loggar som kan innehålla känsliga värden till en felrapport.
 | MQTT är anslutet men inga mätningar når SQLite | Kontrollera topic/ACL, fysisk DHT11-läsning, mottagarlogg och JSON-validering. Statuspayload `online`/`offline` kan ge en extra varning eftersom mottagaren prenumererar brett. |
 | `/health` svarar men databasendpoints felar | API-processen är igång men databasen kan sakna tabellen `readings`; kontrollera att mottagaren har initierat databasen och att båda tjänsterna använder samma datakatalog. |
 | `/api/v1/readings/latest` ger 404 | Tabellen finns men saknar godkända mätningar. Kontrollera mottagarens valideringslogg och `/api/v1/status`. |
-| Flera identiska poster syns | QoS 1 kan ge omleverans; databasen deduplicerar inte. |
+| Flera identiska poster syns | O-01 i testprotokollet visar flera mottagna kopior efter en observerad köläggning. ESP32 publicerar med QoS 1 och kan sända om okvitterad data, men Python prenumererar med standardvärdet QoS 0. Kontrollera brokerlogg/paketspårning innan omsändning pekas ut som rotorsak; databasen deduplicerar inte. |
+
+### O-01: upprepade mätningar
+
+Vid körningen 2026-10-05 köades en fysisk mätning med tidsstämpeln
+`12:16:22Z` en gång i den fångade ESP32-loggen och fick en MQTT-kvittens.
+Mottagaren loggade ändå tre ankomster av samma sexfältsmeddelande och tre
+databasrader skapades. Mottagaren gör en insättning per `on_message()`; den
+har ingen deduplicering. Det talar för att upprepningen sker före lagringen,
+men visar inte om flera PUBLISH nådde brokern eller om brokern skickade
+flera kopior vidare.
+
+ESP-MQTT kan sända om okvitterade QoS 1-publiceringar. Det är därför en
+rimlig hypotes, inte en bevisad förklaring för just dessa tre ankomster.
+[ESP-MQTT](https://docs.espressif.com/projects/esp-mqtt/en/latest/esp32/)
+beskriver omsändningen och [Paho](https://eclipse.dev/paho/files/paho.mqtt.python/html/client.html)
+anger QoS 0 som standard vid prenumeration.
+Nästa diagnostiska steg är att jämföra ESP32:s publicerings-ID och en
+brokerlogg eller paketspårning för samma tidsstämpel, samt kontrollera
+antalet inkommande PUBLISH på båda sidor av brokern. MQTT:s `message_id`
+identifierar inte en mätning genom hela kedjan. Behåll O-01 som öppen
+tills observationerna skiljer hypoteserna åt.
 
 ## Fall 1: avsiktligt ogiltig MQTT-port vid start
 
@@ -95,11 +116,16 @@ Last Will medan brokern är stoppad.
 Detta fall bevisar inte att Last Will `offline` publicerades eller att samma
 mätning nådde SQLite och API. De delarna kräver separata körningar.
 
-## Återstående två felprov för slutleveransen
+## Felprov för slutleveransen
 
-I [testprotokollet](../testprotokoll.md) finns F-01 (ogiltig JSON skickad via
-MQTT) och F-02 (oväntat nätverksavbrott för ESP32 medan brokern fortsätter
-köra). Båda har status **Ej körd**. Fyll i symptom, hur felet hittades,
-verktyg/loggar, orsak, genomförd åtgärd och verifiering utifrån faktiska
-observationer när de körs. Låt brokern fortsätta köra under F-02, annars
-kan den inte publicera Last Will `offline`.
+[F-01 i testprotokollet](../testprotokoll.md) genomfördes 2026-10-05:
+avsiktligt trasig JSON avvisades, varningen loggades och antalet lagrade
+poster var oförändrat i den kontrollerade omkörningen. Testet är **Godkänt**.
+
+F-02 genomfördes samma dag med ett långt oväntat WiFi-avbrott för ESP32,
+medan brokern och en separat prenumerant fortsatte köra. Last Will
+`offline` observerades, men WiFi-försöken tog slut och nya mätningar nådde
+inte API:t efter att nätverket återkom. F-02 är **Underkänt**. En separat
+WiFi-task med fortsatt återförsök och fördubblad väntetid infördes i koden
+2026-10-06. Den har ännu inte verifierats med nytt firmwarebygge, flashning
+och samma långa avbrott; tidigare resultat ska inte skrivas om som godkänt.
