@@ -42,31 +42,50 @@ loggar som kan innehålla känsliga värden till en felrapport.
 | Mottagaren avslutas direkt | Saknad/ogiltig `MQTT_BROKER` eller `MQTT_PORT`; kontrollera lokal `.env` och felmeddelandet. |
 | ESP32 startar inte MQTT | WiFi-initiering eller NTP-synkronisering misslyckades; läs första felraden i seriell logg. |
 | TLS-anslutning misslyckas | Fel CA, fel hostname/SAN, fel port eller klocka som inte synkroniserats; kontrollera vilken klient som ger felet. Stäng inte av certifikatkontrollen för att få anslutning. |
-| MQTT är anslutet men inga mätningar når SQLite | Kontrollera topic/ACL, fysisk DHT11-läsning, mottagarlogg och JSON-validering. Statuspayload `online`/`offline` kan ge en extra varning eftersom mottagaren prenumererar brett. |
-| `/health` svarar men databasendpoints felar | API-processen är igång men databasen kan sakna tabellen `readings`; kontrollera att mottagaren har initierat databasen och att båda tjänsterna använder samma datakatalog. |
+| MQTT är anslutet men inga mätningar når SQLite | Kontrollera att publiceringen ligger exakt på `esp-test/<device-id>/telemetry`, att ACL tillåter topicet, att DHT11-läsningen lyckas och att payloaden godkänns. Statuspayload `online`/`offline` ignoreras avsiktligt av telemetrivalideringen. |
+| `/health` svarar men databasendpoints felar | API-processen är igång men databasen kan sakna tabellen `readings` eller ha fel filrättigheter. Kontrollera delad datakatalog och att `HOST_UID`/`HOST_GID` i `.env` matchar `id -u`/`id -g`. |
 | `/api/v1/readings/latest` ger 404 | Tabellen finns men saknar godkända mätningar. Kontrollera mottagarens valideringslogg och `/api/v1/status`. |
-| Flera identiska poster syns | O-01 i testprotokollet visar flera mottagna kopior efter en observerad köläggning. ESP32 publicerar med QoS 1 och kan sända om okvitterad data, men Python prenumererar med standardvärdet QoS 0. Kontrollera brokerlogg/paketspårning innan omsändning pekas ut som rotorsak; databasen deduplicerar inte. |
+| Flera identiska poster syns | Nya kopior med samma `sensorId` och `timestamp` ska loggas som ignorerade och inte skapa en ny rad. Kontrollera att den senaste mottagarimagen kör, och jämför loggens `qos`, `dup` och `mid`. Historiska dubbletter finns kvar. |
 
 ### O-01: upprepade mätningar
 
 Vid körningen 2026-10-05 köades en fysisk mätning med tidsstämpeln
 `12:16:22Z` en gång i den fångade ESP32-loggen och fick en MQTT-kvittens.
-Mottagaren loggade ändå tre ankomster av samma sexfältsmeddelande och tre
-databasrader skapades. Mottagaren gör en insättning per `on_message()`; den
-har ingen deduplicering. Det talar för att upprepningen sker före lagringen,
-men visar inte om flera PUBLISH nådde brokern eller om brokern skickade
-flera kopior vidare.
+Mottagaren loggade ändå tre ankomster och tre databasrader skapades. En
+kontroll före åtgärden fann totalt 121 rader men bara 89 unika kombinationer
+av sensor-ID och tidsstämpel, alltså 32 historiska överskottsrader.
 
 ESP-MQTT kan sända om okvitterade QoS 1-publiceringar. Det är därför en
 rimlig hypotes, inte en bevisad förklaring för just dessa tre ankomster.
 [ESP-MQTT](https://docs.espressif.com/projects/esp-mqtt/en/latest/esp32/)
-beskriver omsändningen och [Paho](https://eclipse.dev/paho/files/paho.mqtt.python/html/client.html)
-anger QoS 0 som standard vid prenumeration.
-Nästa diagnostiska steg är att jämföra ESP32:s publicerings-ID och en
-brokerlogg eller paketspårning för samma tidsstämpel, samt kontrollera
-antalet inkommande PUBLISH på båda sidor av brokern. MQTT:s `message_id`
-identifierar inte en mätning genom hela kedjan. Behåll O-01 som öppen
-tills observationerna skiljer hypoteserna åt.
+beskriver omsändning, men den exakta transportorsaken för de historiska
+kopiorna är inte bevisad. MQTT:s `message_id` identifierar inte en mätning
+genom hela kedjan.
+
+Åtgärden 2026-10-07 var att prenumerera på `esp-test/+/telemetry` med QoS 1
+och göra lagringen villkorad på att kombinationen `sensorId` och `timestamp`
+inte redan finns. Ett runtime-test publicerade samma giltiga QoS 1-payload
+två gånger. Båda leveranserna nådde callbacken, den andra loggades som
+ignorerad och exakt en rad lagrades. Den syntetiska testraden raderades
+efteråt. O-01 är därmed åtgärdad på lagringsnivå för den nuvarande enda
+mottagarprocessen; de äldre raderna bevaras. Flera samtidiga skrivprocesser
+bör kompletteras med en unik databasbegränsning.
+
+## Bygg- och flashproblem för ESP32
+
+Om bygget stoppar med att
+`configUSE_LIST_DATA_INTEGRITY_CHECK_BYTES` är omdefinierad ska lokala
+komponenter inte inkludera den interna headern `freertos/projdefs.h`
+direkt. Projektets WiFi-komponent använder nu enbart de publika FreeRTOS-
+headerkedjorna. Efter att den direkta inkluderingen togs bort byggde
+firmwaren med ESP-IDF 6.0.
+
+Om flashningen först visar att alla byte skrivits och verifierats men sedan
+slutar med pySerial-felet `Could not configure port`, inträffade felet efter
+själva skrivningen vid hard reset. Kontrollera USB-kabel, portnamn och om en
+annan monitor håller porten; koppla vid behov om enheten och starta monitorn
+separat. På den verifierade körningen startade den nya firmwaren och dess
+seriella logg kunde därefter följas.
 
 ## Fall 1: avsiktligt ogiltig MQTT-port vid start
 
@@ -122,10 +141,9 @@ mätning nådde SQLite och API. De delarna kräver separata körningar.
 avsiktligt trasig JSON avvisades, varningen loggades och antalet lagrade
 poster var oförändrat i den kontrollerade omkörningen. Testet är **Godkänt**.
 
-F-02 genomfördes samma dag med ett långt oväntat WiFi-avbrott för ESP32,
-medan brokern och en separat prenumerant fortsatte köra. Last Will
-`offline` observerades, men WiFi-försöken tog slut och nya mätningar nådde
-inte API:t efter att nätverket återkom. F-02 är **Underkänt**. En separat
-WiFi-task med fortsatt återförsök och fördubblad väntetid infördes i koden
-2026-10-06. Den har ännu inte verifierats med nytt firmwarebygge, flashning
-och samma långa avbrott; tidigare resultat ska inte skrivas om som godkänt.
+F-02 genomfördes först 2026-10-05 och underkändes eftersom WiFi-försöken tog
+slut efter ett långt avbrott. En separat WiFi-task med fortsatt återförsök,
+exponentiell väntetid och jitter infördes därefter. Omtestet 2026-10-07
+visade retained Last Will `offline`, fortsatt sampling till RAM-kön,
+WiFi-backoff upp till 30 sekunder och automatisk återhämtning av WiFi, TLS,
+MQTT, SQLite och API när nätverket återkom. F-02 är därför **Godkänt**.

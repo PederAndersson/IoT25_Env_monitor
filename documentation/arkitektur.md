@@ -27,7 +27,7 @@ flowchart LR
 | `telemetry_service` | Läser sensorn periodiskt, tidsstämplar mätningar, lägger dem i en FreeRTOS-kö och bygger JSON. |
 | `mqtt_service` | Äger TLS/MQTT, enhets-ID, topics, statusmeddelanden och återanslutning. |
 | MQTT-broker | Förmedlar publikationer till prenumeranter och hanterar retained status samt Last Will. Körs utanför detta repos Compose-fil. |
-| `mqtt_receiver.py` | Prenumererar på MQTT, avkodar och validerar JSON samt sparar godkända mätningar. |
+| `mqtt_receiver.py` | Prenumererar på `esp-test/+/telemetry` med QoS 1, avkodar och validerar JSON samt sparar nya godkända mätningar. |
 | SQLite | Lagrar mätningar i `data/readings.db`. |
 | `api.py` | Gör lagrade mätningar och ett enkelt antal tillgängliga via HTTP. |
 
@@ -57,9 +57,10 @@ sätt som uppfyller kravspecifikationen utan att publicera personlig lokal
 konfiguration.
 
 Brokerkonton och topicbehörigheter förvaltas utanför detta repo. Firmwaren
-publicerar endast under `esp-test/<device-id>/`. Mottagaren prenumererar i
-dag på både `esp-test/#` och ett äldre `building/room-a/climate/#`; det
-senare används inte av firmwarens nuvarande topics.
+publicerar endast under `esp-test/<device-id>/`. Mottagaren prenumererar på
+`esp-test/+/telemetry`, där `+` motsvarar exakt ett device-ID. Status-topicet
+och andra topics når därför inte telemetrivalideringen. Callbacken kontrollerar
+dessutom topicstrukturen innan payloaden behandlas.
 
 ### MQTT-topics och leverans
 
@@ -77,9 +78,9 @@ Keepalive är 60 sekunder. Efter en första lyckad IP-anslutning fortsätter
 WiFi-tasken att schemalägga återförsök vid frånkoppling, med en bastid som
 fördubblas från 1 till högst 30 sekunder och 0–1000 ms jitter. Bastiden
 återställs när enheten får IP igen. Före första lyckade anslutningen gäller
-fortfarande `CONFIG_APP_WIFI_MAXIMUM_RETRY` (standardvärde 5). Denna
-WiFi-ändring finns i koden men har ännu inte verifierats genom ett nytt
-bygg- och långt avbrottstest; se F-02 i testprotokollet.
+fortfarande `CONFIG_APP_WIFI_MAXIMUM_RETRY` (standardvärde 5). Ett nytt
+bygge och F-02-omtest 2026-10-07 verifierade fortsatt WiFi-backoff, ny IP-
+anslutning samt efterföljande TLS-, MQTT- och telemetriåterhämtning.
 
 ESP32 väntar på WiFi/IP innan nya MQTT-försök. MQTT-tjänsten använder en
 separat exponential backoff från ungefär 10 till högst 300 sekunder, med
@@ -90,17 +91,24 @@ räknas och loggas. En mätning behålls av publiceringstasken tills MQTT-biblio
 outbox har accepterat den. Ett accepterat enqueue är ännu ingen garanti för
 att brokern eller mottagaren har lagrat mätningen.
 
-ESP32 publicerar telemetri med QoS 1, medan Pythonmottagarens
-`subscribe("esp-test/#")` använder Pahos standardvärde QoS 0. QoS 1 på
-publiceringssidan kan fortfarande medföra flera kopior av samma mätning;
-orsaken till de observerade dubbletterna är inte fastställd. Firmware loggar
-MQTT:s `message_id` vid köläggning och publiceringskvittens, men det ID:t
-följer inte oförändrat genom brokern till Pythonklienten.
+ESP32 publicerar telemetri med QoS 1 och Pythonmottagaren prenumererar på
+telemetrifiltret med QoS 1. QoS 1 kan fortfarande leverera samma mätning mer
+än en gång. Mottagaren loggar därför QoS, `dup` och `message_id` och gör en
+atomär villkorad insättning: en redan lagrad kombination av `sensorId` och
+`timestamp` ignoreras. Den exakta transportorsaken till äldre observerade
+dubbletter är inte fastställd. MQTT:s `message_id` gäller en anslutning och
+följer inte oförändrat genom hela kedjan.
 
 Pythonmottagaren anropar Pahos `connect()` och därefter `loop_forever()`.
 Den loggar anslutning och frånkoppling, men har ingen egen explicit
 backoff eller felhantering runt det första `connect()`-anropet. Compose är
 konfigurerad med `restart: unless-stopped` för mottagarcontainern.
+
+Compose kör API och mottagare med `${HOST_UID:-1000}:${HOST_GID:-1000}`.
+Det gör att båda tjänsterna använder samma identitet mot den bind-mountade
+`data/`-katalogen och motverkar att SQLite-filen blir skrivbar enbart för
+containerns användare. Lokala UID/GID-värden anges i den Git-ignorerade
+`.env`-filen när de avviker från 1000.
 
 ## Datakontrakt
 
@@ -149,18 +157,19 @@ bara att API-processen svarar; den provar inte SQLite, brokern eller sensorn.
 
 ## Begränsningar och förbättringar
 
-- Samma mätning har observerats flera gånger i mottagare och databas
-  (O-01 i testprotokollet). QoS 1-omsändning är en hypotes, inte en
-  fastställd orsak. Databas och API har ingen deduplicering.
+- Samma mätning har historiskt observerats flera gånger i mottagare och
+  databas (O-01). Framtida kopior med samma `sensorId` och `timestamp`
+  ignoreras av den nuvarande mottagartjänsten. De 32 historiska
+  överskottsraderna bevaras och deras exakta transportorsak är inte fastställd.
+  En framtida lösning med flera samtidiga skrivprocesser bör även använda en
+  unik begränsning i databasschemat.
 - RAM-kön är inte beständig över omstart och kan tappa äldsta mätningar vid
   längre avbrott. Persistens eller en tydlig larmgräns vore nästa steg.
-- Mottagarens breda `esp-test/#`-prenumeration omfattar statusmeddelandena
-  `online`/`offline`, som nu behandlas som ogiltig JSON och ger missvisande
-  valideringsvarningar. Prenumeration eller topic-routing bör snävas in.
 - En larmkölängd finns i konfigurationen men ingen larmkö används ännu.
 - `storedReadings` visar historisk radmängd, inte aktuell sensorkontakt.
   Tid sedan senaste mätning och en felräknare skulle ge bättre övervakning.
 - Pythonmottagaren bör få tydlig felhantering och väntan även när den första
   brokeranslutningen misslyckas.
 - Det sammanhängande flödet från fysisk DHT11 till API verifierades
-  2026-10-05 (M-03), men dubblettavvikelsen O-01 kvarstår.
+  2026-10-05. Dubblettskydd och smal telemetriprenumeration verifierades i
+  en automatiserad svit och i runtime 2026-10-07.

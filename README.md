@@ -93,7 +93,10 @@ python -m src.iot_receiver.mqtt_receiver
 
 `set -a` gör att variabler som läses från `.env` exporteras till processen.
 `set +a` stänger av automatisk export igen. Kommandot startar mottagaren,
-skapar SQLite-tabellen vid behov och väntar på MQTT-meddelanden.
+skapar SQLite-tabellen vid behov och väntar på telemetri under
+`esp-test/+/telemetry` med QoS 1. Statusmeddelanden skickas inte till
+telemetrivalideringen. En redan lagrad kombination av `sensorId` och
+`timestamp` ignoreras.
 
 Starta API:t i en andra terminal från projektroten:
 

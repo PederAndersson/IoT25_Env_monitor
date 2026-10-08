@@ -105,8 +105,11 @@ curl -sS http://127.0.0.1:8000/api/v1/status
 {"storedReadings":12}
 ```
 
-`storedReadings` är antalet rader i databasen. Det är inte antalet unika
-fysiska mätningar, eftersom QoS 1-dubbletter inte tas bort.
+`storedReadings` är antalet rader i databasen. Nya kopior med samma
+`sensorId` och `timestamp` ignoreras av den nuvarande MQTT-mottagaren.
+Databasen innehåller dock 32 historiska överskottsrader från tiden före
+dubblettskyddet, så måttet är inte ett säkert historiskt antal unika fysiska
+mätningar.
 
 ## Fel och åtkomst
 
