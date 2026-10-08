@@ -1,13 +1,14 @@
-# Automatisk testsvit
+# Automated test suite
 
-Testsviten verifierar Pythonmottagarens datakontrakt, SQLite-lagring,
-FastAPI-endpoints och MQTT-konfiguration utan att använda verkligt nätverk
-eller verklig projektdata.
+The suite verifies the Python receiver's data contract, SQLite persistence,
+FastAPI endpoints, and MQTT configuration without using a real network or
+project data.
 
 ## Installation
 
-Kör från projektroten. Kommandona skapar en lokal virtuell miljö och
-installerar testberoenden i den; de ändrar inte produktionsdata.
+Run these commands from the project root. They create a local virtual
+environment and install test dependencies there; they do not change
+production data.
 
 ```bash
 python -m venv .venv
@@ -15,15 +16,15 @@ source .venv/bin/activate
 python -m pip install -r requirements-dev.txt
 ```
 
-## Körning
+## Running tests
 
-Kör hela sviten:
+Run the full suite:
 
 ```bash
 python -m pytest
 ```
 
-Kör en del av sviten genom att ange filen:
+Run one part of the suite by naming its test file:
 
 ```bash
 python -m pytest tests/test_validation.py
@@ -32,23 +33,23 @@ python -m pytest tests/test_api.py
 python -m pytest tests/test_mqtt_receiver.py
 ```
 
-Flaggan `-q` ger kortare utdata och `-v` visar varje testnamn:
+The `-q` flag produces shorter output, while `-v` displays every test name:
 
 ```bash
 python -m pytest -q
 python -m pytest -v
 ```
 
-## Isolering
+## Isolation
 
-- Varje databastest använder en ny databas under pytest:s temporära katalog.
-- Både mottagaren och API-funktionerna pekas om till samma temporära databas.
-- FastAPI:s byggda frågefältsmodell testas direkt för `limit`-validering;
-  riktiga HTTP-statusar ingår i det manuella lokala API-testet.
-- MQTT-klienten ersätts med en fejkklient i starttestet.
-- Inga tester läser `.env`, kontaktar brokern eller använder ESP32.
-- `data/readings.db` ska därför ha oförändrad checksumma före och efter en
-  testkörning.
+- Each database test uses a new database in pytest's temporary directory.
+- The receiver and API functions are pointed at the same temporary database.
+- FastAPI's constructed query model is tested directly for `limit` validation;
+  actual HTTP statuses are covered by the manual local API test.
+- A fake MQTT client replaces the real one in the startup test.
+- No test reads `.env`, contacts the broker, or uses the ESP32.
+- The checksum of `data/readings.db` should therefore be unchanged before
+  and after a test run.
 
-Manuella firmware-, TLS-, Compose- och end-to-end-tester dokumenteras i
+Manual firmware, TLS, Compose, and end-to-end tests are documented in
 `testprotokoll.md`.

@@ -1,24 +1,25 @@
 # REST-API
 
-API:t gör mätvärden i SQLite tillgängliga för andra lokala program via HTTP.
-Det finns inget skriv-API. Starta det enligt [README](../README.md). Vid
-lokal Pythonstart används basadressen `http://127.0.0.1:8000`.
+The API makes readings stored in SQLite available to other local programs
+over HTTP. It has no write operations. Start it as described in the
+[README](../README.md). The base URL for a local Python start is
+`http://127.0.0.1:8000`.
 
-Ett eget läs-API valdes eftersom mätningarna redan lagras lokalt och flera
-klienter kan hämta dem utan direkt åtkomst till SQLite eller MQTT-brokern.
-Det undviker också ett beroende på en extern webbtjänst för att visa
-projektets egna sensordata.
+A read-only API was chosen because the measurements are already stored
+locally. Multiple clients can retrieve them without direct access to SQLite
+or the MQTT broker. Displaying the project's sensor data also avoids a
+dependency on an external web service.
 
-Alla svar är JSON. Kommandona nedan läser data och ändrar inte databasen.
+All responses are JSON. The commands below only read data.
 
-| Metod och sökväg | Parameter | Normal respons | Fel |
+| Method and path | Parameter | Normal response | Error |
 | --- | --- | --- | --- |
-| `GET /health` | Ingen | `200`, `{"status":"ok"}` | Ingen särskild felkod definierad i applikationen |
-| `GET /api/v1/readings/latest` | Ingen | `200`, senaste lagrade mätningen | `404` om tabellen saknar mätningar |
-| `GET /api/v1/readings` | `limit`: heltal 1–100, standard 100 | `200`, lista med nyaste poster först; `[]` om den är tom | `422` om `limit` är ogiltig |
-| `GET /api/v1/status` | Ingen | `200`, antal lagrade mätningar | Ingen särskild felkod definierad i applikationen |
+| `GET /health` | None | `200`, `{"status":"ok"}` | No application-specific error code |
+| `GET /api/v1/readings/latest` | None | `200`, latest stored reading | `404` if there are no readings |
+| `GET /api/v1/readings` | `limit`: integer 1–100, default 100 | `200`, newest readings first; `[]` if empty | `422` if `limit` is invalid |
+| `GET /api/v1/status` | None | `200`, number of stored readings | No application-specific error code |
 
-### Hälsa
+### Health
 
 ```bash
 curl -sS http://127.0.0.1:8000/health
@@ -28,16 +29,16 @@ curl -sS http://127.0.0.1:8000/health
 {"status":"ok"}
 ```
 
-`/health` visar att API-processen svarar. Den provar inte databas, broker,
-ESP32 eller färskheten hos mätningarna.
+`/health` shows that the API process responds. It does not check the
+database, broker, ESP32, or freshness of the readings.
 
-### Senaste mätningen
+### Latest reading
 
 ```bash
 curl -sS http://127.0.0.1:8000/api/v1/readings/latest
 ```
 
-Exempel på ett `200`-svar:
+Example `200` response:
 
 ```json
 {
@@ -51,19 +52,19 @@ Exempel på ett `200`-svar:
 }
 ```
 
-När tabellen är tom blir status `404` med svaret:
+If the table is empty, the API returns `404` with:
 
 ```json
 {"detail":"Reading not available."}
 ```
 
-### Historik
+### History
 
 ```bash
 curl -sS 'http://127.0.0.1:8000/api/v1/readings?limit=2'
 ```
 
-Exempel på ett `200`-svar:
+Example `200` response:
 
 ```json
 [
@@ -88,14 +89,14 @@ Exempel på ett `200`-svar:
 ]
 ```
 
-Sorteringen använder databasens fallande `id`, inte en ny sortering efter
-`timestamp`. En tom tabell ger `200` och `[]`. Om `limit` utelämnas används
-100. Till exempel ger `limit=0`, `limit=101` och `limit=hej` status `422`.
-FastAPI returnerar då ett JSON-objekt med `detail`, en lista som beskriver
-vilket frågefält som var felaktigt. Den exakta texten kan bero på versionen
-av FastAPI och dess valideringsbibliotek.
+Results are ordered by descending database `id`, not re-sorted by
+`timestamp`. An empty table returns `200` and `[]`. If `limit` is omitted,
+it defaults to 100. For example, `limit=0`, `limit=101`, and `limit=hej`
+return `422`. FastAPI then returns a JSON object whose `detail` list
+describes the invalid query parameter. Exact wording can vary with the
+FastAPI and validation-library versions.
 
-### Övervakningsmått
+### Monitoring metric
 
 ```bash
 curl -sS http://127.0.0.1:8000/api/v1/status
@@ -105,21 +106,21 @@ curl -sS http://127.0.0.1:8000/api/v1/status
 {"storedReadings":12}
 ```
 
-`storedReadings` är antalet rader i databasen. Nya kopior med samma
-`sensorId` och `timestamp` ignoreras av den nuvarande MQTT-mottagaren.
-Databasen innehåller dock 32 historiska överskottsrader från tiden före
-dubblettskyddet, så måttet är inte ett säkert historiskt antal unika fysiska
-mätningar.
+`storedReadings` counts database rows. The current MQTT receiver ignores
+new copies with the same `sensorId` and `timestamp`. The database still
+contains 32 historical surplus rows from before duplicate protection was
+added, so this metric is not a reliable historical count of unique physical
+measurements.
 
-## Fel och åtkomst
+## Errors and access
 
-API:t har ingen autentisering och använder HTTP utan TLS. Lokal Pythonstart
-enligt README lyssnar på `127.0.0.1`, medan Compose publicerar port `8000`
-från containern på värddatorn. Exponering mot andra nät behöver begränsas
-utanför applikationen. Om databastabellen ännu inte har skapats kan
-databasberoende endpoints misslyckas med ett serverfel; `/health` kan ändå
-svara `200`.
+The API has no authentication and uses HTTP without TLS. A local Python
+start according to the README listens on `127.0.0.1`, while Compose publishes
+the container's port `8000` on the host. Access from other networks must be
+restricted outside the application. If the `readings` table has not yet been
+created, database-dependent endpoints may return a server error even while
+`/health` returns `200`.
 
-De automatiska testerna kontrollerar endpointfunktioner och FastAPI:s
-`limit`-validering. Riktiga HTTP-statusar ska dessutom verifieras enligt
-[M-06 i testprotokollet](../testprotokoll.md).
+The automated tests check endpoint functions and FastAPI's `limit`
+validation. Actual HTTP statuses are also verified in
+[M-06 of the test protocol](../testprotokoll.md).

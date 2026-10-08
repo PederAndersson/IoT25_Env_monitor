@@ -1,20 +1,20 @@
-# Säker och integrerad IoT-lösning
+# Secure and integrated IoT solution
 
-Projektet läser temperatur och luftfuktighet från en DHT11 ansluten till en
-ESP32-C6. Enheten skickar mätningarna som JSON över MQTT med TLS. En lokal
-Python-tjänst validerar och lagrar mätningarna i SQLite, och ett FastAPI-API
-gör dem tillgängliga över HTTP.
+This project reads temperature and humidity from a DHT11 connected to an
+ESP32-C6. The device sends the readings as JSON over MQTT with TLS. A local
+Python service validates and stores them in SQLite, and a FastAPI service
+makes them available over HTTP.
 
-Den här instruktionen beskriver lokal utveckling och testning. Driftsättning
-på Raspberry Pi ingår inte.
+These instructions cover local development and testing. Raspberry Pi
+deployment is outside the scope of this repository.
 
-## Dataflöde
+## Data flow
 
 ```text
-DHT11 -> ESP32-C6 -> MQTT över TLS -> Pythonmottagare -> SQLite -> FastAPI
+DHT11 -> ESP32-C6 -> MQTT over TLS -> Python receiver -> SQLite -> FastAPI
 ```
 
-MQTT-meddelandet använder följande kontrakt:
+MQTT messages use this data contract:
 
 ```json
 {
@@ -27,18 +27,19 @@ MQTT-meddelandet använder följande kontrakt:
 }
 ```
 
-## Lokala beroenden
+## Local requirements
 
-- Python 3.13 eller en kompatibel senare version
-- Docker Engine med Docker Compose för containerkörning
-- ESP-IDF 6.0 för firmwarebygge
-- ESP32-C6 och DHT11 för hårdvarutester
-- Tillgång till en MQTT-broker som accepterar MQTT över TLS
+- Python 3.13 or a compatible later version
+- Docker Engine with Docker Compose for container operation
+- ESP-IDF 6.0 to build the firmware
+- An ESP32-C6 and DHT11 for hardware tests
+- Your own MQTT broker that accepts ordinary MQTT over TLS and allows the
+  clients to use `esp-test/<device-id>/`
 
-## Pythonmiljö
+## Python environment
 
-Följande kommandon skapar en lokal virtuell miljö och installerar
-produktionsberoendena. De ändrar endast `.venv/`, som ignoreras av Git.
+The following commands create a local virtual environment and install the
+production dependencies. They only change `.venv/`, which Git ignores.
 
 ```bash
 python -m venv .venv
@@ -46,43 +47,53 @@ source .venv/bin/activate
 python -m pip install -r requirements.txt
 ```
 
-För att även köra testsviten installerar du utvecklingsberoendena i samma
-miljö:
+Install the development dependencies in the same environment to run the test
+suite:
 
 ```bash
 python -m pip install -r requirements-dev.txt
 ```
 
-## Lokal konfiguration
+## Local configuration
 
-Kopiera exempelkonfigurationen och ersätt platshållarna med värden för din
-lokala testmiljö:
+Set up your own MQTT broker with TLS and a username/password before starting
+the clients. Choose a hostname that appears in the broker certificate's
+subject alternative names (SAN) and is reachable by both the ESP32 and the
+receiver. Copy the example configuration and replace the placeholders with
+your broker's hostname, TLS port, and credentials:
 
 ```bash
 cp .env.example .env
 ```
 
-`.env` ska innehålla:
+`.env` should contain:
 
-- `MQTT_BROKER`: broker-certifikatets värdnamn;
-- `MQTT_PORT`: TLS-porten, normalt `8883`;
-- `MQTT_USERNAME` och `MQTT_PASSWORD`: lokala MQTT-uppgifter;
-- valfritt `MQTT_CA_PATH`: sökväg till betrodd root-CA. Standard är
-  `certs/ca.crt`;
-- `HOST_UID` och `HOST_GID`: användar- och grupp-ID för den lokala
-  användaren. Standardvärdet `1000` passar vanliga Linuxinstallationer.
-  Kontrollera lokala värden med `id -u` respektive `id -g`.
+- `MQTT_BROKER`: the hostname in the broker certificate;
+- `MQTT_PORT`: the TLS port chosen for your broker; `8883` in
+  `.env.example` is only an example;
+- `MQTT_USERNAME` and `MQTT_PASSWORD`: local MQTT credentials;
+- `MQTT_CA_PATH`: a path to a CA file that trusts your broker's certificate
+  chain. If unset, the receiver uses `certs/ca.crt`, which works only when
+  that CA issued the broker certificate. For a publicly trusted certificate,
+  you can specify the environment's system CA bundle. With Compose, the path
+  must exist inside the container;
+- `HOST_UID` and `HOST_GID`: the local user's user and group IDs. The default
+  `1000` suits many Linux installations. Check your values with `id -u` and
+  `id -g`.
 
-Compose kör tjänsterna med dessa ID:n så att SQLite-filen i den bind-mountade
-`data/`-katalogen förblir skrivbar både från containrarna och från en lokal
-Pythonprocess. Om ID:n inte är `1000` ska de lokala värdena anges i `.env`.
+Compose runs both services with these IDs so that SQLite in the bind-mounted
+`data/` directory remains writable from both the containers and a local
+Python process. If either ID differs from `1000`, set it in `.env`.
 
-Filen `.env` är ignorerad av Git. Lägg aldrig riktiga lösenord eller privata
-nycklar i versionshanterade filer.
+Set the same hostname and port in the ESP32 MQTT URI through
+`idf.py menuconfig`. The firmware uses the ESP-IDF CA bundle, so that bundle
+must trust the broker certificate. A private CA requires adapting the
+firmware configuration. Git ignores `.env`. Never add real passwords or
+private keys to tracked files.
 
-## Starta Python-tjänster lokalt
+## Start the Python services locally
 
-Aktivera först `.venv`. Starta sedan MQTT-mottagaren i en terminal:
+First activate `.venv`. Then start the MQTT receiver in one terminal:
 
 ```bash
 set -a
@@ -91,49 +102,48 @@ set +a
 python -m src.iot_receiver.mqtt_receiver
 ```
 
-`set -a` gör att variabler som läses från `.env` exporteras till processen.
-`set +a` stänger av automatisk export igen. Kommandot startar mottagaren,
-skapar SQLite-tabellen vid behov och väntar på telemetri under
-`esp-test/+/telemetry` med QoS 1. Statusmeddelanden skickas inte till
-telemetrivalideringen. En redan lagrad kombination av `sensorId` och
-`timestamp` ignoreras.
+`set -a` exports variables read from `.env` to the process. `set +a` turns
+automatic export off again. The command starts the receiver, creates the
+SQLite table if needed, and waits for telemetry on `esp-test/+/telemetry`
+with QoS 1. Status messages do not reach telemetry validation. An existing
+combination of `sensorId` and `timestamp` is ignored.
 
-Starta API:t i en andra terminal från projektroten:
+Start the API in a second terminal from the project root:
 
 ```bash
 source .venv/bin/activate
 python -m uvicorn src.iot_receiver.api:app --host 127.0.0.1 --port 8000
 ```
 
-API:t nås därefter på `http://127.0.0.1:8000`.
+The API is then available at `http://127.0.0.1:8000`.
 
-## Starta lokalt med Docker Compose
+## Run locally with Docker Compose
 
-Följande kommando bygger imagen och startar API och MQTT-mottagare. Det
-skapar containrar och skriver lokal runtime-data under `data/`.
+The following command builds the image and starts the API and MQTT receiver.
+It creates containers and writes local runtime data under `data/`.
 
 ```bash
 docker compose up --build -d
 ```
 
-Kontrollera status och loggar med:
+Check service status and logs with:
 
 ```bash
 docker compose ps
 docker compose logs api mqtt_receiver
 ```
 
-Stoppa de lokala containrarna utan att radera SQLite-filen:
+Stop the local containers without deleting the SQLite file:
 
 ```bash
 docker compose down
 ```
 
-## Bygg ESP32-firmware lokalt
+## Build the ESP32 firmware locally
 
-Öppna en terminal där ESP-IDF 6.0 är installerat. Om miljön inte redan är
-laddad, kör ESP-IDF-installationens `export.sh`. Variabeln `IDF_PATH` ska
-peka på din lokala ESP-IDF-installation.
+Open a terminal with ESP-IDF 6.0 installed. If the environment is not yet
+loaded, run the installation's `export.sh`. `IDF_PATH` must point to your
+local ESP-IDF installation.
 
 ```bash
 source "$IDF_PATH/export.sh"
@@ -143,23 +153,22 @@ idf.py menuconfig
 idf.py build
 ```
 
-`set-target` och `menuconfig` skapar eller ändrar den lokala, Git-ignorerade
-filen `sdkconfig`. Ange WiFi, MQTT-URI, användarnamn och lösenord där.
-`idf.py build` kompilerar och länkar firmwaren men verifierar inte sensorn
-eller nätverkskommunikationen.
+`set-target` and `menuconfig` create or modify the local, Git-ignored
+`sdkconfig` file. Enter WiFi settings, the MQTT URI, username, and password
+there. `idf.py build` compiles and links the firmware but does not verify the
+sensor or network communication.
 
-När ESP32-C6 är ansluten kan firmware flashas och seriell logg öppnas med:
+With the ESP32-C6 connected, flash the firmware and open the serial monitor:
 
 ```bash
 idf.py -p /dev/ttyACM0 flash monitor
 ```
 
-Anpassa porten till datorn. Avsluta monitorn med `Ctrl+]`.
+Adjust the serial port for your computer. Exit the monitor with `Ctrl+]`.
 
-## Verifiera det lokala dataflödet
+## Verify the local data flow
 
-Kontrollera först API-hälsan. `curl`-anropen är skrivskyddade och ändrar
-ingen data:
+First check the API health. These `curl` requests only read data:
 
 ```bash
 curl -sS http://127.0.0.1:8000/health
@@ -168,33 +177,33 @@ curl -sS http://127.0.0.1:8000/api/v1/readings/latest
 curl -sS 'http://127.0.0.1:8000/api/v1/readings?limit=10'
 ```
 
-Ett komplett test kräver att ESP32-loggen visar en fysisk DHT11-läsning,
-MQTT-mottagaren loggar samma meddelande och API:t returnerar den lagrade
-mätningen. Det fullständiga förfarandet finns i `testprotokoll.md`.
+A complete test requires an ESP32 log showing a physical DHT11 reading, a
+matching message in the MQTT receiver log, and the stored reading returned
+by the API. The full procedure is in `testprotokoll.md`.
 
-## Kör automatiska tester
+## Run automated tests
 
 ```bash
 source .venv/bin/activate
 python -m pytest
 ```
 
-Testerna använder temporära databaser och mockad MQTT. De ansluter inte till
-brokern och ändrar inte `data/readings.db`. Se `tests/README.md` för fler
-detaljer.
+The tests use temporary databases and a mocked MQTT client. They do not
+connect to the broker or change `data/readings.db`. See `tests/README.md` for
+details.
 
-## Dokumentation
+## Documentation
 
-[Dokumentationsöversikten](documentation/README.md) länkar till arkitektur,
-API, säkerhetsanalys och felsökning. Observerade och återstående verifieringar
-finns i [testprotokollet](testprotokoll.md).
+The [documentation index](documentation/README.md) links to the architecture,
+API, security analysis, and troubleshooting guides. Observed results and
+remaining verification are in the [test protocol](testprotokoll.md).
 
-## Kända begränsningar
+## Known limitations
 
-- Telemetrikön ligger i RAM och förloras om ESP32 startas om.
-- QoS 1 kan ge dubbletter; mottagaren ignorerar därför en redan lagrad
-  kombination av `sensorId` och `timestamp`.
-- API:t har ingen egen autentisering och ska endast exponeras i en betrodd
-  lokal miljö tills åtkomstkontroll har införts.
-- Godkänt firmwarebygge ersätter inte test med fysisk sensor, nätverk och
-  broker.
+- The telemetry queue is held in RAM and is lost when the ESP32 restarts.
+- QoS 1 can deliver duplicates; the receiver therefore ignores an existing
+  `sensorId` and `timestamp` combination.
+- The API has no authentication of its own and should only be exposed in a
+  trusted local environment until access control is added.
+- A successful firmware build does not replace testing with the physical
+  sensor, network, and broker.

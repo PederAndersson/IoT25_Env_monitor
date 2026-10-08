@@ -1,149 +1,151 @@
-# Felsökning
+# Troubleshooting
 
-Dokumentet beskriver hur vanliga fel lokaliseras och vilka observationer som
-redan finns. Det ersätter inte [testprotokollets](../testprotokoll.md)
-resultatfält för de två planerade, avsiktliga felproven F-01 och F-02.
+This guide explains how to locate common faults and summarizes observations
+already made. The [test protocol](../testprotokoll.md) contains the result
+records for the two deliberate fault tests F-01 and F-02.
 
-## Börja med att lokalisera felet
+## First locate the fault
 
-Följ dataflödet ett steg i taget:
+Follow the data flow one step at a time:
 
-1. **ESP32 och DHT11:** Visar seriell logg en lyckad fysisk sensorläsning?
-2. **WiFi och NTP:** Fick enheten IP-adress och synkroniserades tiden innan
-   MQTT startade?
-3. **MQTT:** Visar enhetens logg anslutning och en QoS 1-publicering på
+1. **ESP32 and DHT11:** Does the serial log show a successful physical sensor
+   reading?
+2. **WiFi and NTP:** Did the device obtain an IP address and synchronize time
+   before MQTT started?
+3. **MQTT:** Does the device log show a connection and QoS 1 publication on
    `esp-test/<device-id>/telemetry`?
-4. **Pythonmottagaren:** Loggas rätt topic och en godkänd validering?
-5. **SQLite och API:** Ökar `storedReadings`, och returnerar
-   `/api/v1/readings/latest` den förväntade tidsstämpeln?
+4. **Python receiver:** Does it log the correct topic and successful
+   validation?
+5. **SQLite and API:** Does `storedReadings` increase, and does
+   `/api/v1/readings/latest` return the expected timestamp?
 
-Ett fel i ett tidigare steg kan inte rättas i API:t. [Arkitekturen](arkitektur.md)
-visar vilka delar som ansvarar för varje övergång.
+An error earlier in the flow cannot be fixed at the API. The
+[architecture guide](arkitektur.md) shows which component owns each step.
 
-### Lokala kontroller
+### Local checks
 
-| Kontroll | Vad resultatet betyder |
+| Check | What the result means |
 | --- | --- |
-| `docker compose ps` | Visar om lokala containrar kör och om API-healthcheck är healthy. Kommandot ändrar inget. |
-| `docker compose logs --tail=50 mqtt_receiver` | Visar de senaste 50 loggraderna från mottagaren. `--tail=50` begränsar mängden utdata; kommandot är skrivskyddat. |
-| `curl -i http://127.0.0.1:8000/health` | `-i` visar även HTTP-status och headers. `200` bekräftar att API-processen svarar, inte att databasen eller brokern fungerar. |
-| `curl -i http://127.0.0.1:8000/api/v1/status` | Visar om API:t kan läsa antalet databasrader. Kör kommandot före och efter en mätning. |
-| `python -m pytest` | Kör isolerade tester för validering, databas, API-funktioner och MQTT-konfiguration. Ingen verklig broker eller sensor används. |
+| `docker compose ps` | Shows whether local containers run and whether the API health check reports healthy. Makes no changes. |
+| `docker compose logs --tail=50 mqtt_receiver` | Shows the receiver's last 50 log lines. `--tail=50` limits output; this is read-only. |
+| `curl -i http://127.0.0.1:8000/health` | `-i` also shows HTTP status and headers. `200` confirms the API process responds, not that the database or broker works. |
+| `curl -i http://127.0.0.1:8000/api/v1/status` | Shows whether the API can count database rows. Run before and after a reading. |
+| `python -m pytest` | Runs isolated tests for validation, database, API functions, and MQTT configuration. No real broker or sensor is used. |
 
-Kör kommandona från projektroten, med den lokala miljön enligt
-[README](../README.md). Vid firmwarefel används `idf.py monitor` i en terminal
-där ESP-IDF-miljön är laddad. Undvik att kopiera hela miljövariabler eller
-loggar som kan innehålla känsliga värden till en felrapport.
+Run these commands from the project root in the local environment described
+in the [README](../README.md). For firmware faults, use `idf.py monitor` in a
+terminal with the ESP-IDF environment loaded. Avoid copying complete
+environment variables or sensitive logs into a fault report.
 
-## Vanliga symptom
+## Common symptoms
 
-| Symptom | Sannolik orsak och kontroll |
+| Symptom | Likely cause and check |
 | --- | --- |
-| Mottagaren avslutas direkt | Saknad/ogiltig `MQTT_BROKER` eller `MQTT_PORT`; kontrollera lokal `.env` och felmeddelandet. |
-| ESP32 startar inte MQTT | WiFi-initiering eller NTP-synkronisering misslyckades; läs första felraden i seriell logg. |
-| TLS-anslutning misslyckas | Fel CA, fel hostname/SAN, fel port eller klocka som inte synkroniserats; kontrollera vilken klient som ger felet. Stäng inte av certifikatkontrollen för att få anslutning. |
-| MQTT är anslutet men inga mätningar når SQLite | Kontrollera att publiceringen ligger exakt på `esp-test/<device-id>/telemetry`, att ACL tillåter topicet, att DHT11-läsningen lyckas och att payloaden godkänns. Statuspayload `online`/`offline` ignoreras avsiktligt av telemetrivalideringen. |
-| `/health` svarar men databasendpoints felar | API-processen är igång men databasen kan sakna tabellen `readings` eller ha fel filrättigheter. Kontrollera delad datakatalog och att `HOST_UID`/`HOST_GID` i `.env` matchar `id -u`/`id -g`. |
-| `/api/v1/readings/latest` ger 404 | Tabellen finns men saknar godkända mätningar. Kontrollera mottagarens valideringslogg och `/api/v1/status`. |
-| Flera identiska poster syns | Nya kopior med samma `sensorId` och `timestamp` ska loggas som ignorerade och inte skapa en ny rad. Kontrollera att den senaste mottagarimagen kör, och jämför loggens `qos`, `dup` och `mid`. Historiska dubbletter finns kvar. |
+| Receiver exits immediately | Missing or invalid `MQTT_BROKER` or `MQTT_PORT`; check local `.env` and the error message. |
+| ESP32 does not start MQTT | WiFi initialization or NTP synchronization failed; read the first error in the serial log. |
+| TLS connection fails | Wrong CA, hostname/SAN, port, or unsynchronized clock; identify which client reports the failure. Do not disable certificate verification to connect. |
+| MQTT connects but no readings reach SQLite | Check that publication uses exactly `esp-test/<device-id>/telemetry`, broker ACLs allow it, DHT11 reads succeed, and the payload passes validation. Status payloads `online`/`offline` are deliberately ignored by telemetry validation. |
+| `/health` responds but database endpoints fail | The API process runs, but the database may lack the `readings` table or have incorrect file permissions. Check the shared data directory and that `HOST_UID`/`HOST_GID` in `.env` match `id -u`/`id -g`. |
+| `/api/v1/readings/latest` returns 404 | The table exists but has no valid readings. Check receiver validation logs and `/api/v1/status`. |
+| Multiple identical rows appear | New copies with the same `sensorId` and `timestamp` should be logged as ignored without creating another row. Check that the current receiver image runs and compare `qos`, `dup`, and `mid` in logs. Historical duplicates remain. |
 
-### O-01: upprepade mätningar
+### O-01: repeated readings
 
-Vid körningen 2026-10-05 köades en fysisk mätning med tidsstämpeln
-`12:16:22Z` en gång i den fångade ESP32-loggen och fick en MQTT-kvittens.
-Mottagaren loggade ändå tre ankomster och tre databasrader skapades. En
-kontroll före åtgärden fann totalt 121 rader men bara 89 unika kombinationer
-av sensor-ID och tidsstämpel, alltså 32 historiska överskottsrader.
+During the 2026-10-05 run, one physical reading with timestamp `12:16:22Z`
+was queued once in the captured ESP32 log and received an MQTT
+acknowledgment. The receiver nevertheless logged three arrivals and created
+three database rows. A check before the fix found 121 total rows but only 89
+unique sensor ID/timestamp combinations: 32 historical surplus rows.
 
-ESP-MQTT kan sända om okvitterade QoS 1-publiceringar. Det är därför en
-rimlig hypotes, inte en bevisad förklaring för just dessa tre ankomster.
+ESP-MQTT can resend unacknowledged QoS 1 publications. That is a plausible
+hypothesis, not a proven cause of these particular arrivals.
 [ESP-MQTT](https://docs.espressif.com/projects/esp-mqtt/en/latest/esp32/)
-beskriver omsändning, men den exakta transportorsaken för de historiska
-kopiorna är inte bevisad. MQTT:s `message_id` identifierar inte en mätning
-genom hela kedjan.
+describes retransmission, but the exact transport cause of the historical
+copies is unproven. MQTT's `message_id` does not identify a reading across
+the entire data flow.
 
-Åtgärden 2026-10-07 var att prenumerera på `esp-test/+/telemetry` med QoS 1
-och göra lagringen villkorad på att kombinationen `sensorId` och `timestamp`
-inte redan finns. Ett runtime-test publicerade samma giltiga QoS 1-payload
-två gånger. Båda leveranserna nådde callbacken, den andra loggades som
-ignorerad och exakt en rad lagrades. Den syntetiska testraden raderades
-efteråt. O-01 är därmed åtgärdad på lagringsnivå för den nuvarande enda
-mottagarprocessen; de äldre raderna bevaras. Flera samtidiga skrivprocesser
-bör kompletteras med en unik databasbegränsning.
+The 2026-10-07 fix subscribed to `esp-test/+/telemetry` with QoS 1 and made
+storage conditional on the `sensorId` and `timestamp` combination not already
+existing. A runtime test published the same valid synthetic QoS 1 payload
+twice. Both copies reached the callback; the second was logged as ignored,
+and exactly one row was stored. The synthetic test row was deleted afterward.
+O-01 is thus addressed at the storage layer for the current single receiver
+process; the older rows remain. Multiple concurrent writers should also be
+protected by a unique database constraint.
 
-## Bygg- och flashproblem för ESP32
+## ESP32 build and flashing problems
 
-Om bygget stoppar med att
-`configUSE_LIST_DATA_INTEGRITY_CHECK_BYTES` är omdefinierad ska lokala
-komponenter inte inkludera den interna headern `freertos/projdefs.h`
-direkt. Projektets WiFi-komponent använder nu enbart de publika FreeRTOS-
-headerkedjorna. Efter att den direkta inkluderingen togs bort byggde
-firmwaren med ESP-IDF 6.0.
+If the build stops because `configUSE_LIST_DATA_INTEGRITY_CHECK_BYTES` is
+redefined, local components must not include the internal
+`freertos/projdefs.h` header directly. The project's WiFi component now
+uses only public FreeRTOS include paths. After the direct include was removed,
+the firmware built with ESP-IDF 6.0.
 
-Om flashningen först visar att alla byte skrivits och verifierats men sedan
-slutar med pySerial-felet `Could not configure port`, inträffade felet efter
-själva skrivningen vid hard reset. Kontrollera USB-kabel, portnamn och om en
-annan monitor håller porten; koppla vid behov om enheten och starta monitorn
-separat. På den verifierade körningen startade den nya firmwaren och dess
-seriella logg kunde därefter följas.
+If flashing reports that all bytes were written and verified, then ends with
+pySerial's `Could not configure port` error, the failure occurred during the
+hard reset after writing. Check the USB cable, port name, and whether another
+monitor holds the port. Reconnect the device if needed and start the monitor
+separately. In the verified run, the new firmware started and its serial log
+could then be observed.
 
-## Fall 1: avsiktligt ogiltig MQTT-port vid start
+## Case 1: deliberately invalid MQTT port at startup
 
-Detta är en historisk lokal kontroll beskriven i `docs/STARTPROMPT.md` den
-2026-10-02. Den visar felhantering för konfiguration, men är inte en ny
-end-to-end-körning av F-01 i testprotokollet.
+This historical local check is described in `docs/STARTPROMPT.md` for
+2026-10-02. It shows configuration error handling, but it is not a new
+end-to-end run of F-01 in the test protocol.
 
-1. **Observerat symptom:** När port saknades avslutades mottagarprocessen
-   med status 1. Icke-numeriska värden och värden utanför 1–65535 avvisades.
-2. **Hur felet identifierades:** Flera medvetet felaktiga `MQTT_PORT`-värden
-   testades separat i en isolerad miljö och processens avslutningsstatus
-   kontrollerades.
-3. **Verktyg eller loggar:** Mottagarens felmeddelanden för saknad variabel,
-   icke-heltal och ogiltigt portintervall; terminalens exit status.
-4. **Felets orsak:** `MQTT_PORT` saknades eller innehöll ett ogiltigt värde.
-5. **Genomförd åtgärd:** Mottagarkoden validerar numera porten vid start och
-   avslutar tydligt med status 1 i stället för att fortsätta med fel
-   konfiguration. Användaren behöver ange en riktig TLS-port i lokal `.env`.
-6. **Verifiering av åtgärd:** Felvägarna och exit status 1 för saknad port
-   verifierades manuellt 2026-10-02. Automatiska tester verifierar även
-   ogiltiga värden och en giltig, mockad startväg. Återhämtning mot en
-   verklig broker efter ändrad `.env` är inte dokumenterad i detta fall.
+1. **Observed symptom:** When the port was missing, the receiver process
+   exited with status 1. Nonnumeric values and values outside 1–65535 were
+   rejected.
+2. **How it was identified:** Several deliberately invalid `MQTT_PORT`
+   values were tested separately in an isolated environment, and the process
+   exit status was checked.
+3. **Tools or logs:** Receiver errors for a missing variable, noninteger
+   value, and invalid port range; terminal exit status.
+4. **Cause:** `MQTT_PORT` was missing or invalid.
+5. **Action taken:** The receiver now validates the port at startup and
+   exits clearly with status 1 instead of continuing with bad configuration.
+   The user must set a valid TLS port in local `.env`.
+6. **How the action was verified:** Error paths and exit status 1 for a
+   missing port were checked manually on 2026-10-02. Automated tests also
+   verify invalid values and a valid mocked startup path. This case does not
+   document reconnection to a real broker after changing `.env`.
 
-## Fall 2: avsiktligt brokeravbrott och återanslutning
+## Case 2: deliberate broker outage and reconnection
 
-Detta är en historisk hårdvaruobservation från 2026-10-02 enligt
-`docs/STARTPROMPT.md`. Den prövar MQTT-återanslutning, men inte brokerpublicerad
-Last Will medan brokern är stoppad.
+This historical hardware observation from 2026-10-02 is recorded in
+`docs/STARTPROMPT.md`. It tests MQTT reconnection, but a stopped broker
+cannot publish the Last Will.
 
-1. **Observerat symptom:** ESP32 tappade MQTT-kontakten när brokern inte var
-   tillgänglig. Loggen visade successiva väntetider omkring 10, 20 och 40
-   sekunder.
-2. **Hur felet identifierades:** Brokeravbrott infördes avsiktligt och
-   ESP32:s seriella logg följdes under avbrott och efter att brokern återkom.
-3. **Verktyg eller loggar:** Seriell firmwarelogg för frånkoppling,
-   återanslutningsförsök, TLS-validering och ny MQTT-anslutning.
-4. **Felets orsak:** Brokern var tillfälligt otillgänglig trots att ESP32:s
-   WiFi-förbindelse fanns kvar.
-5. **Genomförd åtgärd:** Brokern gjordes tillgänglig igen. Firmwarens
-   återanslutning med exponential backoff hanterade avbrottet utan omstart
-   av enheten.
-6. **Verifiering av åtgärd:** Loggen visade att certifikatet validerades och
-   klienten anslöt igen. Tidigare observationer visade även återställning
-   till ungefär 10 sekunders väntan efter minst 60 sekunders stabil
-   anslutning och bibehållen högre backoff efter en kort anslutning.
+1. **Observed symptom:** The ESP32 lost MQTT contact while the broker was
+   unavailable. The log showed successive delays of about 10, 20, and 40
+   seconds.
+2. **How it was identified:** The broker outage was introduced deliberately,
+   and the ESP32 serial log was followed during and after the outage.
+3. **Tools or logs:** Firmware serial logs for disconnection, reconnection
+   attempts, TLS validation, and a new MQTT connection.
+4. **Cause:** The broker was temporarily unavailable while the ESP32 still
+   had WiFi connectivity.
+5. **Action taken:** The broker was made available again. Firmware
+   reconnection with exponential backoff handled the outage without a device
+   restart.
+6. **How the action was verified:** Logs showed certificate validation and
+   a new connection. Earlier observations also showed a reset to roughly
+   10 seconds after at least 60 seconds of stable connection and continued
+   higher backoff after a short connection.
 
-Detta fall bevisar inte att Last Will `offline` publicerades eller att samma
-mätning nådde SQLite och API. De delarna kräver separata körningar.
+This case does not prove that Last Will `offline` was published or that the
+same reading reached SQLite and the API. Those require separate runs.
 
-## Felprov för slutleveransen
+## Fault tests for the final submission
 
-[F-01 i testprotokollet](../testprotokoll.md) genomfördes 2026-10-05:
-avsiktligt trasig JSON avvisades, varningen loggades och antalet lagrade
-poster var oförändrat i den kontrollerade omkörningen. Testet är **Godkänt**.
+[F-01 in the test protocol](../testprotokoll.md) was run on 2026-10-05:
+deliberately malformed JSON was rejected and logged, and the stored row
+count did not change in the controlled repeat run. The test **passed**.
 
-F-02 genomfördes först 2026-10-05 och underkändes eftersom WiFi-försöken tog
-slut efter ett långt avbrott. En separat WiFi-task med fortsatt återförsök,
-exponentiell väntetid och jitter infördes därefter. Omtestet 2026-10-07
-visade retained Last Will `offline`, fortsatt sampling till RAM-kön,
-WiFi-backoff upp till 30 sekunder och automatisk återhämtning av WiFi, TLS,
-MQTT, SQLite och API när nätverket återkom. F-02 är därför **Godkänt**.
+F-02 initially failed on 2026-10-05 because WiFi retries stopped after a
+long outage. A separate WiFi task with continued retries, exponential delay,
+and jitter was then added. The 2026-10-07 retest showed retained Last Will
+`offline`, continued sampling into the RAM queue, WiFi backoff up to
+30 seconds, and automatic recovery of WiFi, TLS, MQTT, SQLite, and API after
+the network returned. F-02 therefore **passed**.

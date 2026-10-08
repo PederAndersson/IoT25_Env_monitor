@@ -1,19 +1,12 @@
-# Projektdokumentation
+# Project documentation
 
-Dokumenten beskriver den implementation som finns i huvudrepot. Börja med
-[projektets README](../README.md) för lokal installation och körning.
+These documents describe the implementation in the main repository. Start with
+the [project README](../README.md) for local installation and operation.
 
-| Dokument | Innehåll |
+| Document | Contents |
 | --- | --- |
-| [Arkitektur](arkitektur.md) | Komponenter, dataflöde, MQTT, adressering och datakontrakt |
-| [API](api.md) | HTTP-endpoints, parametrar, svar och fel |
-| [Säkerhet](sakerhet.md) | Risker, genomförda skydd och begränsningar |
-| [Felsökning](felsokning.md) | Diagnos och dokumenterade felobservationer |
-| [Testprotokoll](../testprotokoll.md) | Kravspårning, testfall och observerade resultat |
-
-Kravspecifikationen anger sökvägen `docs/` för dessa fyra dokument. De ligger
-här i `documentation/` enligt projektägarens önskemål, eftersom befintliga
-`docs/` är ett separat Git-repo som ignoreras av huvudrepot. Kontrollera
-före inlämning att kursens granskare accepterar sökvägen, eller publicera
-samma leveransdokument på den föreskrivna sökvägen utan att förlora de
-befintliga lokala anteckningarna.
+| [Architecture](arkitektur.md) | Components, data flow, MQTT, addressing, and data contract |
+| [API](api.md) | HTTP endpoints, parameters, responses, and errors |
+| [Security](sakerhet.md) | Risks, implemented protections, and limitations |
+| [Troubleshooting](felsokning.md) | Diagnosis and documented fault observations |
+| [Test protocol](../testprotokoll.md) | Requirements traceability, test cases, and observed results |
